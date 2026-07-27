@@ -1,0 +1,64 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_URL: https://github.com/data-goblin/power-bi-agentic-development.git
+  UPSTREAM_BRANCH: main
+  REVIEWER_TEAM: DSC-Group-Srl/ci-cd-admins
+
+jobs:
+  sync-upstream:
+    name: Sync upstream main into fork
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout fork
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Configure git identity
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Fetch upstream main
+      run: |
+        git remote add upstream "$UPSTREAM_URL"
+        git fetch upstream "$UPSTREAM_BRANCH"
+
+    - name: Check for new upstream commits
+      id: diff
+      run: |
+        COUNT=$(git rev-list HEAD.."upstream/$UPSTREAM_BRANCH" --count)
+        echo "New upstream commits: $COUNT"
+        echo "changed=$([ "$COUNT" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+    - name: Create sync branch from upstream
+      if: steps.diff.outputs.changed == 'true'
+      id: branch
+      run: |
+        BRANCH="sync/upstream-$(date -u +%Y-%m-%d)"
+        git checkout -b "$BRANCH" "upstream/$UPSTREAM_BRANCH"
+        git push origin "$BRANCH"
+        echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+    - name: Open pull request
+      if: steps.diff.outputs.changed == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh pr create \
+          --base main \
+          --head "${{ steps.branch.outputs.name }}" \
+          --title "chore: sync upstream main ($(date -u +%Y-%m-%d))" \
+          --body "Automated weekly sync of \`main\` from upstream [data-goblin/power-bi-agentic-development](https://github.com/data-goblin/power-bi-agentic-development)." \
+          --reviewer "$REVIEWER_TEAM"
