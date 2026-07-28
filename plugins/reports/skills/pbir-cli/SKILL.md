@@ -288,10 +288,14 @@ Predicate operators: `=`, `__lt`, `__gt`, `__lte`, `__gte`, `__in=a|b|c`, `__con
 ### Conditional Formatting
 
 ```bash
+# Find out what a container accepts before writing to it
+pbir schema describe barChart.dataPoint          # "Conditional formatting:" line at the bottom
+
 # Create CF (structural; use pbir visuals cf)
 pbir visuals cf "Visual" --measure "labels.color _Fmt.StatusColor"
 pbir visuals cf "Visual" --gradient --field "Table.Field" --min-color bad --max-color good
 pbir visuals cf "Visual" --data-bars --field "Table.Field"
+pbir visuals cf "Visual" --image --field "_SVG.Bullet"          # measure-driven image or SVG
 
 # Read / edit / remove CF (dot-path; use pbir set / pbir get)
 pbir get "Visual.dataPoint.fill.cf"                             # summary
@@ -300,7 +304,23 @@ pbir set "Visual.dataPoint.fill.cf" --remove                    # or --clear
 pbir get "Report.Report/**/*.Visual.**.cf"                       # bulk read
 ```
 
-For gradient/rules/icons/data bars options, copy/remove/convert, and best practices, consult **`references/conditional-formatting.md`**.
+CF reaches well past data point colors: titles, subtitles, borders, tooltips, axis
+bounds, reference-line values, data-label text, and error-bar styling all accept a
+measure. `pbir schema describe <type>.<container>` is the authoritative answer for
+any one container, and a starred property there was confirmed against a rendered
+report rather than inferred from the catalog.
+
+When the field driving the format is not the field being formatted (a grid column
+coloured by a helper measure, a combo chart's secondary series), name the target
+with `--target-field`, otherwise the entry scopes to the driver and Desktop renders
+it on the wrong column:
+
+```bash
+pbir visuals cf "Grid.Visual" --rules --field "Sales.Margin %" --rule "lt 0 bad" \
+  --on values.backColor --target-field "Sales.Revenue"
+```
+
+For gradient/rules/icons/data bars/image options, copy/remove/convert, and best practices, consult **`references/conditional-formatting.md`**.
 
 ### Visual Actions, Bookmarks, Drillthrough
 
