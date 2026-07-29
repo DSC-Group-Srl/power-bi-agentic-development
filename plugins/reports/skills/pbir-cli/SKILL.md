@@ -11,6 +11,17 @@ CLI for exploring, building, managing, formatting Power BI reports. All commands
 
 **IMPORTANT:** FIRST Read and adhere to the mental model in [MENTAL-MODEL.md](important/MENTAL-MODEL.md).
 
+## When `pbir` is missing
+
+Install it with `uv tool install pbir-cli` (or `pip install pbir-cli`). That is the route to
+use in every ordinary case, including when the command is missing entirely.
+
+`bin/fetch.sh` downloads a self-contained portable build instead. Reach for it **only** when
+`pbir` is not installed *and* installing it is not possible: no network access to PyPI, no
+Python, or a locked-down machine that forbids installs. A portable build does not update with
+`uv tool upgrade`, so preferring it when a normal install would have worked leaves the user on
+a stale CLI. If an install failed, fix the install rather than routing around it.
+
 ## Keeping the Fabric CLI current
 
 When publishing to Fabric (`pbir publish`) alongside the `fabric-cli` plugin, check the installed Fabric CLI (`fab`) if publishing reports a compatibility problem. Upgrade with `uv tool upgrade ms-fabric-cli` only when required or requested, and honor any user-pinned version.
