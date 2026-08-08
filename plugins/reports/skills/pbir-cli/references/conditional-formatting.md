@@ -216,7 +216,7 @@ Verify published CF in the service reading view on a fresh load. An open edit-mo
 
 Error bars can silently disable per-point `dataPoint.fill` CF on the same visual: bars fall back to the theme default color, and removing the `error` container restores the CF in the same publish cycle. Not every chart is affected (a single-measure bar chart can carry both). After adding error bars to a visual with measure-driven fill, re-check the rendering; where they conflict, choose the target tick or the per-point fill, and carry the measure signal on the data labels instead.
 
-`pbir validate --qa` flags static text colors with poor contrast (`LOW_TEXT_CONTRAST`, WCAG ratio below 3:1) on axis labels, data labels, and titles; `--contrast-against visual|page|effective` picks the background layer. Measure-driven colors are skipped, so verify CF ink contrast by rendering.
+`pbir validate --qa` flags static text colors with poor contrast (`LOW_TEXT_CONTRAST`, WCAG ratio below 3:1) on axis labels, data labels, and titles, and static or theme-default data-point fills with poor contrast (`LOW_FILL_CONTRAST`, same 3:1 threshold) on visuals with a `dataPoint.defaultColor` slot; `--contrast-against visual|page|effective` picks the background layer for both. Measure-driven colors are skipped, so verify CF ink and fill contrast by rendering.
 
 ### Category axis labels cannot be colored per category
 
