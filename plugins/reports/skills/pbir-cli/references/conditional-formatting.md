@@ -210,6 +210,10 @@ pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero"
 pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling"
 ```
 
+### Category axis labels cannot be colored per category
+
+`categoryAxis.labelColor` accepts a measure, but the renderer evaluates it once at visual scope and paints every category label the same color. The service UI serializes this CF selector-less, and that selector-less entry is the only shape the axis renderer consumes: entries carrying a selector of any kind (`dataViewWildcard` with `matchingOption` 0 or 1, per-category `scopeId` comparisons, `metadata` pointing at the category column or the measure, compound selector plus metadata, with or without a competing selector-less entry) are skipped outright, and the labels fall back to the theme color. Per-category axis label color does not exist in native Power BI visuals. When category items must be highlighted individually, put the measure CF on the data labels (`labels.color`) or the bar fill (`dataPoint.fill`) instead; those containers do resolve per data point.
+
 ### Gradient and Data Bars
 
 ```bash
