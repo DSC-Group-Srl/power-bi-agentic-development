@@ -1,5 +1,9 @@
 name: Sync Upstream
 
+# Opens a PR that brings data-goblin/power-bi-agentic-development's main into this fork.
+# Uses a single reusable sync branch that is force-pushed each run, so repeated runs refresh
+# the same PR instead of leaving one orphaned branch per attempt.
+
 on:
   schedule:
     - cron: '0 4 * * 1'
@@ -12,7 +16,10 @@ permissions:
 env:
   UPSTREAM_URL: https://github.com/data-goblin/power-bi-agentic-development.git
   UPSTREAM_BRANCH: main
+  BASE_BRANCH: main
+  SYNC_BRANCH: sync/upstream
   REVIEWER_TEAM: DSC-Group-Srl/ci-cd-admins
+  REPO: DSC-Group-Srl/power-bi-agentic-development
 
 jobs:
   sync-upstream:
@@ -23,7 +30,12 @@ jobs:
     - name: Checkout fork
       uses: actions/checkout@v4
       with:
+        ref: ${{ env.BASE_BRANCH }}
         fetch-depth: 0
+        # The default GITHUB_TOKEN can't create PRs on this org ("Resource not accessible by
+        # integration (createPullRequest)"), which failed every run of this workflow. Use the
+        # org PAT for every git/gh operation below.
+        token: ${{ secrets.TEMPLATE_SYNC_PAT }}
 
     - name: Configure git identity
       run: |
@@ -32,7 +44,7 @@ jobs:
 
     - name: Fetch upstream main
       run: |
-        git remote add upstream "$UPSTREAM_URL"
+        git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
         git fetch upstream "$UPSTREAM_BRANCH"
 
     - name: Check for new upstream commits
@@ -44,21 +56,82 @@ jobs:
 
     - name: Create sync branch from upstream
       if: steps.diff.outputs.changed == 'true'
-      id: branch
       run: |
-        BRANCH="sync/upstream-$(date -u +%Y-%m-%d)"
-        git checkout -b "$BRANCH" "upstream/$UPSTREAM_BRANCH"
-        git push origin "$BRANCH"
-        echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+        mkdir -p .sync-tmp
+        {
+          echo "Automated weekly sync of \`$BASE_BRANCH\` from upstream"
+          echo "[data-goblin/power-bi-agentic-development](https://github.com/data-goblin/power-bi-agentic-development)."
+          echo
+          echo "### Upstream commits not yet in \`$BASE_BRANCH\`"
+          echo
+          git log "HEAD..upstream/$UPSTREAM_BRANCH" --oneline | sed 's/^/- /'
+        } > .sync-tmp/pr-body.md
 
-    - name: Open pull request
+        git checkout -B "$SYNC_BRANCH" "upstream/$UPSTREAM_BRANCH"
+        git push --force origin "$SYNC_BRANCH"
+
+        # GitHub's API can lag behind a freshly pushed branch ref by a couple of seconds.
+        for i in $(seq 1 10); do
+          if git ls-remote --exit-code origin "refs/heads/$SYNC_BRANCH" >/dev/null 2>&1; then
+            break
+          fi
+          echo "Waiting for $SYNC_BRANCH to propagate remotely (attempt $i/10)..."
+          sleep 3
+        done
+
+    - name: Open or refresh pull request
       if: steps.diff.outputs.changed == 'true'
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_PAT }}
       run: |
-        gh pr create \
-          --base main \
-          --head "${{ steps.branch.outputs.name }}" \
-          --title "chore: sync upstream main ($(date -u +%Y-%m-%d))" \
-          --body "Automated weekly sync of \`main\` from upstream [data-goblin/power-bi-agentic-development](https://github.com/data-goblin/power-bi-agentic-development)." \
-          --reviewer "$REVIEWER_TEAM"
+        # gh pr create/edit go through the createPullRequest/updatePullRequest GraphQL
+        # mutations, which this PAT can't use. Reads work fine - only mutations are affected -
+        # so go through REST endpoints instead, which this PAT's permissions cover.
+        OWNER="${REPO%%/*}"
+        TEAM_SLUG="${REVIEWER_TEAM##*/}"
+        BODY_FILE=".sync-tmp/pr-body.md"
+
+        for i in $(seq 1 5); do
+          PR_NUMBER=$(gh api "repos/$REPO/pulls?head=$OWNER:$SYNC_BRANCH&state=open" --jq '.[0].number // empty' 2>/dev/null || true)
+
+          if [ -n "$PR_NUMBER" ]; then
+            if gh api -X PATCH "repos/$REPO/pulls/$PR_NUMBER" -f body="$(cat "$BODY_FILE")" >/dev/null; then
+              echo "Refreshed PR #$PR_NUMBER"
+              exit 0
+            fi
+          else
+            NEW_NUMBER=$(gh api -X POST "repos/$REPO/pulls" \
+              -f title="chore: sync upstream main ($(date -u +%Y-%m-%d))" \
+              -f head="$SYNC_BRANCH" \
+              -f base="$BASE_BRANCH" \
+              -f body="$(cat "$BODY_FILE")" \
+              --jq .number 2>/dev/null || true)
+
+            if [ -n "$NEW_NUMBER" ]; then
+              gh api -X POST "repos/$REPO/pulls/$NEW_NUMBER/requested_reviewers" \
+                -f "team_reviewers[]=$TEAM_SLUG" >/dev/null || echo "Warning: could not request $REVIEWER_TEAM as reviewer"
+              echo "Opened PR #$NEW_NUMBER"
+              exit 0
+            fi
+          fi
+
+          echo "PR create/edit attempt $i/5 failed, retrying in 5s..."
+          sleep 5
+        done
+        echo "Giving up after 5 attempts."
+        exit 1
+
+    - name: Clean up sync branch if this run failed
+      if: failure()
+      env:
+        GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_PAT }}
+      run: |
+        # Only delete the branch if it never got a PR (or the PR is already closed/merged) -
+        # never destroy a branch backing a real open/merged PR.
+        STATE=$(gh pr view "$SYNC_BRANCH" --json state --jq .state 2>/dev/null || echo "NONE")
+        if [ "$STATE" != "OPEN" ] && [ "$STATE" != "MERGED" ]; then
+          echo "Deleting orphaned branch $SYNC_BRANCH (PR state: $STATE)"
+          git push origin --delete "$SYNC_BRANCH" 2>/dev/null || true
+        else
+          echo "Leaving $SYNC_BRANCH in place - PR state is $STATE"
+        fi
