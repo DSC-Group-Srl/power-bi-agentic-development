@@ -1,7 +1,7 @@
 {
-  "name": "fabric-cli",
+  "name": "paginated-reports",
   "version": "26.31.1",
-  "description": "Connect to, read, and modify anything in Fabric via the CLI.",
+  "description": "Author, validate, publish, and test print-ready paginated reports.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"
@@ -11,11 +11,12 @@
   "license": "GPL-3.0",
   "keywords": [
     "power-bi",
-    "fabric",
-    "fabric-cli",
-    "fab",
-    "semantic-model",
-    "workspace",
-    "lakehouse"
-  ]
+    "paginated-reports",
+    "rdl",
+    "report-builder",
+    "ssrs",
+    "pbirs"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/copilot-hooks.json"
 }

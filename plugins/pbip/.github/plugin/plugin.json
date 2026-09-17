@@ -1,7 +1,7 @@
 {
-  "name": "fabric-cli",
+  "name": "pbip",
   "version": "26.31.1",
-  "description": "Connect to, read, and modify anything in Fabric via the CLI.",
+  "description": "Edit and understand PBIP projects, including TMDL, PBIR, and project structure.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"
@@ -11,11 +11,13 @@
   "license": "GPL-3.0",
   "keywords": [
     "power-bi",
-    "fabric",
-    "fabric-cli",
-    "fab",
+    "pbip",
+    "tmdl",
+    "pbir",
     "semantic-model",
-    "workspace",
-    "lakehouse"
-  ]
+    "report"
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "hooks": "./hooks/copilot-hooks.json"
 }

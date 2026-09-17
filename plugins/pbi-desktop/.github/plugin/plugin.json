@@ -16,5 +16,8 @@
     "tom",
     "adomd",
     "dax"
-  ]
+  ],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "hooks": "./hooks/copilot-hooks.json"
 }
