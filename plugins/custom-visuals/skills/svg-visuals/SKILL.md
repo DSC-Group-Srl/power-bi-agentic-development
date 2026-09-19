@@ -1,6 +1,6 @@
 ---
 name: svg-visuals
-description: SVG generation via DAX measures and extension measures with ImageUrl data category for inline visualizations in PBIR reports. Automatically invoke when the user mentions "SVG visual", "DAX sparkline", "SVG measure", "inline graphics with DAX", "ImageUrl data category", "extension measure", or asks to create any DAX-generated chart (progress bars, bullet charts, KPI indicators, data bars, gauges, donut charts, lollipop charts, dumbbell charts, status pills, overlapping bars, boxplots, IBCS bars, jitter plots, box-and-whisker charts).
+description: SVG generation via DAX measures and extension measures with ImageUrl data category for inline visualizations in PBIR reports, including ready templates for matrix and table cells, new card images and per-button images on the new button slicer. Automatically invoke when the user mentions "SVG visual", "DAX sparkline", "SVG measure", "inline graphics with DAX", "ImageUrl data category", "extension measure", or asks to create any DAX-generated chart (progress bars, bullet charts, KPI indicators, data bars, gauges, donut charts, lollipop charts, dumbbell charts, status pills, overlapping bars, boxplots, IBCS bars, jitter plots, box-and-whisker charts).
 ---
 
 # SVG Visuals via DAX Measures (PBIR)
@@ -21,8 +21,12 @@ Generate inline SVG graphics using DAX measures that return SVG markup strings. 
 - Table (`tableEx`): `grid.imageHeight` / `grid.imageWidth` -- `references/svg-table-matrix.md`
 - Matrix (`pivotTable`): same as table -- `references/svg-table-matrix.md`
 - Image (`image`): `sourceType='imageData'` + `sourceField` -- `references/svg-image-visual.md`
-- Card/New (`cardVisual`): `callout.imageFX` -- `references/svg-card-slicer.md`
-- Slicer/New (`advancedSlicerVisual`): header images -- `references/svg-card-slicer.md`
+- Card/New (`cardVisual`): the `image` object (image area) or `cardImage` (callout image) -- `references/svg-template-matrix.md`, patterns in `references/svg-card-slicer.md`
+- Slicer/New (`advancedSlicerVisual`): one image per button through the image "Select from data" slot -- `references/svg-template-matrix.md`
+
+## Start From a Template
+
+Before writing DAX by hand, check `references/svg-template-matrix.md`: it maps each pattern (bullet, progress, pill, sparkline, dumbbell, diverging, gauge) to the hosts it fits, shows the verified PBIR wiring per host, and gives the one-step `pbir visuals svg` / `pbir add gauge-card` commands that write the pattern as a thin report measure and wire it in. Hand-write SVG DAX only for a shape no template covers.
 
 ## Workflow: Creating an SVG Measure
 
