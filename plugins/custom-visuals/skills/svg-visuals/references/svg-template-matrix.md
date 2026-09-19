@@ -17,13 +17,17 @@ dumbbell:   actual and target as two dots joined by a line
             hosts: cell
 diverging:  variance % as a bar left (below target) or right (above) of a center line
             hosts: cell
+delta:      IBCS absolute variance: a bar from a zero line, green or red, the signed difference (K/M/bn) on the other side of zero
+            hosts: cell
+pin:        IBCS relative variance: a line from zero ending in a dot, green or red, the % on the other side of zero
+            hosts: cell (prefer delta and pin to a dumbbell, which cannot show a few % on a wide range)
 gauge:      thin arc in the metric color, dark target tick and label, value in Segoe
-            hosts: card (prefer it to the native gauge, which has no arc thickness and falls back to DIN)
+            hosts: image visual (prefer it to the native gauge, which has no arc thickness and falls back to DIN)
 ```
 
 Choose by the question the reader asks of that spot:
 
-- "Where am I against target?" in a row: bullet (magnitude matters) or diverging (only the gap matters)
+- "Where am I against target?" in a row: bullet (magnitude matters), or delta and pin (only the gap matters)
 - "How far through the goal?": progress
 - "Better or worse, by how much?" in little space: pill
 - "Which way is it moving?": sparkline
@@ -34,7 +38,7 @@ Choose by the question the reader asks of that spot:
 ### Table or matrix cell
 
 - Bind the measure to `Values` like any measure; rename the column header with a projection display name
-- Set `grid.imageWidth` and `grid.imageHeight` on the visual (140 x 24 suits the patterns above; wider stretches a sparkline flat)
+- Set `grid.imageWidth` and `grid.imageHeight` on the visual (110 x 24 suits the patterns above; it is one size for every image column of the visual, and wider stretches a sparkline flat)
 - Scale row bars against the largest row at the same level of the host's row fields, or subtotals dwarf detail rows:
 
 ```dax
@@ -47,6 +51,22 @@ VAR _max =
 
 - Because the scale depends on the host's rows, write one measure per host (name it after the row field, e.g. `Actual bullet by Key Account`)
 - Add a `<desc>` sort key so the image column sorts by the value it shows
+
+### Image visual (an SVG on its own)
+
+A card is for a number; an SVG with nothing else (a gauge, a chart drawn in DAX) goes in an image visual, `visualType: "image"`, reading the measure through "Select from data":
+
+```json
+"image": [{
+  "properties": {
+    "sourceType": {"expr": {"Literal": {"Value": "'imageData'"}}},
+    "sourceField": {"expr": {"Measure": {"Expression": {"SourceRef": {"Schema": "extension", "Entity": "Sales"}}, "Property": "Revenue gauge"}}},
+    "transparency": {"expr": {"Literal": {"Value": "0D"}}}
+  }
+}]
+```
+
+No selector on the entry, and no `query` on the visual: an image visual with an empty `"query": {"queryState": {}}` renders blank.
 
 ### New card (`cardVisual`) image area
 

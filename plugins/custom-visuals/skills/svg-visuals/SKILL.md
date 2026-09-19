@@ -26,7 +26,7 @@ Generate inline SVG graphics using DAX measures that return SVG markup strings. 
 
 ## Start From a Template
 
-Before writing DAX by hand, check `references/svg-template-matrix.md`: it maps each pattern (bullet, progress, pill, sparkline, dumbbell, diverging, gauge) to the hosts it fits, shows the verified PBIR wiring per host, and gives the one-step `pbir visuals svg` / `pbir add gauge-card` commands that write the pattern as a thin report measure and wire it in. Hand-write SVG DAX only for a shape no template covers.
+Before writing DAX by hand, check `references/svg-template-matrix.md`: it maps each pattern (bullet, progress, pill, sparkline, dumbbell, diverging, delta, pin, gauge) to the hosts it fits (an SVG on its own goes in an image visual, a card is for a number), shows the verified PBIR wiring per host, and gives the one-step `pbir visuals svg` / `pbir add gauge-card` commands that write the pattern as a thin report measure and wire it in. Hand-write SVG DAX only for a shape no template covers.
 
 ## Workflow: Creating an SVG Measure
 
