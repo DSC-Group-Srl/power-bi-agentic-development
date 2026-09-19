@@ -34,7 +34,7 @@ Choose by the question the reader asks of that spot:
 ### Table or matrix cell
 
 - Bind the measure to `Values` like any measure; rename the column header with a projection display name
-- Set `grid.imageWidth` and `grid.imageHeight` on the visual (200 x 22 suits the patterns above)
+- Set `grid.imageWidth` and `grid.imageHeight` on the visual (140 x 24 suits the patterns above; wider stretches a sparkline flat)
 - Scale row bars against the largest row at the same level of the host's row fields, or subtotals dwarf detail rows:
 
 ```dax
