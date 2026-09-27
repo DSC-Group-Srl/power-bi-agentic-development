@@ -603,6 +603,7 @@ governance / deploy
 - [download_workspace.py](./scripts/download_workspace.py) ; download a full workspace with all item definitions and lakehouse files
 - [run_notebook_checked.py](./scripts/run_notebook_checked.py) ; run a notebook and check its exit value, exiting non-zero when the notebook's own `{ok:false}` verdict fails despite a `Completed` job status (reads the exit value via the notebook job-instance beta endpoint)
 - [deploy_notebook.py](./scripts/deploy_notebook.py) ; create or update a notebook definition fast (~1-2s) by tight-polling the LRO instead of the CLI's ~20s `Retry-After` cadence; auto-detects create vs update, `--poll-interval` is the performance lever. Strongly prefer this over `fab import` / `nb` for any notebook definition change
+- [task_flow.py](./scripts/task_flow.py) ; create, update, export or delete a workspace task flow from a JSON spec (tasks, items as `<displayName>.<Type>`, edges) through the internal metadata endpoints the Fabric UI uses; no public API or `fab` command exists for task flows
 
 See [scripts/README.md](./scripts/README.md) for detailed usage, arguments, and examples. Always search the `scripts/` folder before writing a new helper; a script may already exist for the task.
 
