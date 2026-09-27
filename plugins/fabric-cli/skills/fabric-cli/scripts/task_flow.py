@@ -57,6 +57,7 @@ Usage
     python3 task_flow.py get   "Sales" --raw                   # the backend JSON as stored
     python3 task_flow.py apply "Sales" -s flow.json            # create or update from a spec
     python3 task_flow.py apply "Sales" -s flow.json --dry-run  # print the body, send nothing
+    python3 task_flow.py rename "Sales" "Order to cash" [--description "..."]
     python3 task_flow.py delete "Sales" --flow "Order to cash"
     python3 task_flow.py types                                 # public item type -> artifactType
 
@@ -355,6 +356,17 @@ def cmd_apply(args):
         print(f"{action} '{result['name']}' ({rid}): {result['tasks']} tasks, {result['edges']} edges, {result['items']} items")
 
 
+def cmd_rename(args):
+    base, ws = cluster(), resolve_workspace(args.workspace)
+    flow = pick(flows(base, ws), args.flow) or fail("No task flow in the workspace")
+    body = {**flow["taskFlow"], "name": args.name}
+    if args.description is not None:
+        body["description"] = args.description
+    call("PUT", f"{base}/metadata/workspaces/{ws}/{WRITE_PATH}/{flow['resourceId']}",
+         PBI_RESOURCE, body, {"If-Match": flow["etag"]})
+    print(f"renamed '{flow['taskFlow'].get('name')}' to '{args.name}' ({flow['resourceId']})")
+
+
 def cmd_delete(args):
     base, ws = cluster(), resolve_workspace(args.workspace)
     flow = pick(flows(base, ws), args.flow) or fail("No task flow in the workspace")
@@ -396,6 +408,13 @@ def main():
     s.add_argument("--flow", help="flow to update (needed only when there are several)")
     s.add_argument("--dry-run", action="store_true", help="print the request body and send nothing")
     s.set_defaults(func=cmd_apply)
+
+    s = sub.add_parser("rename", help="rename a task flow, optionally setting its description")
+    s.add_argument("workspace")
+    s.add_argument("name", help="new name")
+    s.add_argument("--description", help="new description")
+    s.add_argument("--flow", help="flow to rename (needed only when there are several)")
+    s.set_defaults(func=cmd_rename)
 
     s = sub.add_parser("delete", help="delete a task flow")
     s.add_argument("workspace")
