@@ -26,7 +26,7 @@ error:                  CapacityLimitExceeded, "Your organization's Fabric compu
 
 - A background operation of X CU-h adds X / (24 * n) to every timepoint of the next day. On an F2, 1 CU-h adds about 2.1 percent
 - An interactive operation bigger than 10 minutes of capacity (n * 600 CU-s) starts delaying users at once
-- Overage beyond the 10-minute window becomes *carry forward*. Only idle capacity burns it down, so payback takes `carry_forward / ((1 - utilization) * n)` hours. An F2 with 872 CU-h of carry forward needs 18 to 22 days, throttled throughout
+- Overage beyond the 10-minute window becomes *carry forward*. Only idle capacity burns it down, so payback takes `carry_forward / ((1 - utilization) * n)` hours of the SKU's CU. The Monitoring hub's "Carry forward CUs" figure did not match the billed CU-hours in one observed case (3.1M shown, about 200 CU-h billed for the day), so check the bill by meter before quoting a settlement cost
 - Ways out: pause then resume (bills the whole carry forward and smoothed backlog at once, clears throttling); scale the SKU up temporarily (faster burndown, similar total cost); capacity overage billing (3x the normal rate)
 - `fab stop` pauses; the pause is itself the billing event for the carry forward
 
@@ -57,7 +57,7 @@ Plan (preview):
   Viewer:    37 CU-h
   automation job: 2 CU per run
   trigger:   docs say opening, creating or editing a plan item in the portal
-  observed:  2026-09, creating a plan by REST and pushing updateDefinition, with nobody opening the portal, coincided with an 872 CU-h carry forward on an F2 (cause not isolated)
+  observed:  2026-09, creating a plan by REST and pushing updateDefinition, with nobody opening the portal, was billed as one Stakeholder session: meter "Fabric Planning - Stakeholder Sessions Capacity Usage CU", 167.9 CU-h, EUR 31.72 on an F2 in West Europe; it drove the F2 into carry forward and throttling the same day
   verdict:   never on an F2 or F4 without the user accepting the session cost first
 Ontology and graph (preview):
   creating an ontology creates a GraphModel and a lakehouse; graph loads and queries consume capacity
