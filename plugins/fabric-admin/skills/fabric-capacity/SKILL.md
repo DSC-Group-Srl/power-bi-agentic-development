@@ -31,15 +31,17 @@ The model sits in a Pro workspace, so there is no XMLA endpoint and `te` cannot 
 fab api -A powerbi "groups/<metrics-ws-id>/datasets/<metrics-model-id>/executeQueries" -X post -i "$(jq -cn --arg q "$(cat <<'EOF'
 DEFINE
   MPARAMETER 'CapacitiesList' = {"<CAPACITY-ID-UPPERCASE>"}
-  VAR latest = MAX('CU Detail'[Window start time])
+  VAR point = MINX(TOPN(2, 'CU Detail', 'CU Detail'[Window start time], DESC), 'CU Detail'[Window start time])
 EVALUATE
 ROW("pct", CALCULATE(
-  DIVIDE(SUM('CU Detail'[Interactive]) + SUM('CU Detail'[Background]), MAX('CU Detail'[CU limit])),
-  'CU Detail'[Window start time] = latest) * 100)
+  DIVIDE(SUM('CU Detail'[Interactive]) + SUM('CU Detail'[Background]), MAX('CU Detail'[Base capacity units]) * 30),
+  'CU Detail'[Window start time] = point) * 100)
 EOF
 )" '{queries: [{query: $q}]}')"
 ```
 
+- `CU Detail` values are CU-seconds per 30 s timepoint, already smoothed; utilization % = (Interactive + Background) / (Base capacity units * 30). `CU limit` is a ratio (1.0), not a denominator
+- The newest timepoint can hold a whole background operation charged at its start (thousands of percent); read the one before it
 - Capacity IDs: `fab api -A powerbi capacities`
 - Per item for a day: `SUMMARIZECOLUMNS(Items[Workspace name], Items[Item kind], Items[Item name], TREATAS({DATE(y,m,d)}, 'Metrics By Item And Day'[Date]), "CUs", SUM('Metrics By Item And Day'[CU (s)]))`
 - Schema: `INFO.VIEW.TABLES()`, `INFO.VIEW.COLUMNS()`, `INFO.VIEW.MEASURES()` work over `executeQueries`; `INFO.TABLES()` and measure expressions do not
@@ -61,6 +63,7 @@ Failure modes seen on one tenant, in the order they surfaced:
 
 - The data source OAuth refresh token expires after 90 days without use (`AADSTS700082`); scheduled refresh stops and the model goes stale silently. Re-enter the credential in the model settings, then refresh
 - An old app version (47 from 2024) could not serve DirectQuery at all. Update from Apps, Get apps, Template apps, Microsoft Fabric Capacity Metrics, "Update the workspace and the app". It updates in place (same workspace and model IDs) but appends a date to the workspace name; rename it back or fab and te paths break on the `/`
+- After the credential had been re-entered several times, DirectQuery stayed broken (`The credentials provided for the CapacityMetricsCES source are invalid`, `QueryUserError`) even with a passing connection test and working refreshes. Only deleting the app workspace and installing the app fresh fixed it: Get it now, Connect, `UTC_offset` in standard time, OAuth2, pick the capacity admin in the account window. A fresh install gets new workspace and model IDs
 - Saving the credential dialog with "Skip test connection" ticked stores a credential that refreshes fine but fails every DirectQuery with `The credentials provided for the CapacityMetricsCES source are invalid` (`QueryUserError`). Save again with the box unticked; open the settings page with `?alwaysPromptForContentProviderCreds=true` to force a fresh OAuth prompt and pick the capacity admin account explicitly when the browser holds several
 - Moving the workspace to Premium Per User to get XMLA did not help and broke nothing that was not already broken; keep it on shared capacity as Microsoft recommends
 - The account on the credential must be a capacity admin of every capacity queried
@@ -68,5 +71,5 @@ Failure modes seen on one tenant, in the order they surfaced:
 ## What usually fills a small capacity
 
 - Preview Planning sessions: one Stakeholder session is 168 CU-h, billed at once (604,800 CU-s on an F2), drives the capacity into carry forward for days; see `fabric-cli` `capacity-cost.md`
-- SQL databases (including the `__fabric_plan_sys` and `<name>_plan` databases Planning creates, and app backends' databases) consume CU continuously while awake
+- SQL databases: one new rayfin app backend database took 3,584 CU-s in a single hour on an F2 (half the capacity) and held interactive utilization at 93 % for over an hour while its app was being tested. This includes the `__fabric_plan_sys` and `<name>_plan` databases Planning creates, and app backends' databases) consume CU continuously while awake
 - Background jobs are smoothed over 24 h, so a busy morning still counts at night
