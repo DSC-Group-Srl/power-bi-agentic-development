@@ -9,6 +9,7 @@
 #   refresh-cache     - Re-snapshot model metadata after TOM connect or modification
 #   check-ri          - Check referential integrity after relationship/column changes
 #   check-compat      - Report features available at higher compatibility levels
+#   pre / post        - Run every PreToolUse / PostToolUse check in turn (Copilot CLI entry points)
 #
 # All subcommands read hook JSON from stdin and follow Claude Code hook conventions:
 #   exit 0 = OK or not applicable
@@ -76,6 +77,12 @@ config_is_enabled() {
 extract_tool_name() {
     # Extracts tool_name from hook stdin JSON.
     echo "$STDIN_BUF" | jq -r '.tool_name // empty' 2>/dev/null
+}
+
+is_shell_tool() {
+    # True for the shell tool under any host: Claude Code names it Bash,
+    # Copilot CLI names it bash (Unix) or powershell (Windows).
+    case "$1" in Bash|bash|powershell) return 0 ;; *) return 1 ;; esac
 }
 
 extract_command() {
@@ -299,7 +306,7 @@ cmd_validate_dax() {
 
     local tool_name
     tool_name="$(extract_tool_name)"
-    [[ "$tool_name" == "Bash" ]] || exit 0
+    is_shell_tool "$tool_name" || exit 0
 
     local raw_command
     raw_command="$(extract_command)"
@@ -418,7 +425,7 @@ cmd_validate_measure() {
 
     local tool_name
     tool_name="$(extract_tool_name)"
-    [[ "$tool_name" == "Bash" ]] || exit 0
+    is_shell_tool "$tool_name" || exit 0
 
     local raw_command
     raw_command="$(extract_command)"
@@ -469,7 +476,7 @@ cmd_refresh_cache() {
 
     local tool_name
     tool_name="$(extract_tool_name)"
-    [[ "$tool_name" == "Bash" ]] || exit 0
+    is_shell_tool "$tool_name" || exit 0
 
     local raw_command
     raw_command="$(extract_command)"
@@ -518,7 +525,7 @@ cmd_check_ri() {
 
     local tool_name
     tool_name="$(extract_tool_name)"
-    [[ "$tool_name" == "Bash" ]] || exit 0
+    is_shell_tool "$tool_name" || exit 0
 
     local raw_command
     raw_command="$(extract_command)"
@@ -577,7 +584,7 @@ cmd_check_compat() {
 
     local tool_name
     tool_name="$(extract_tool_name)"
-    [[ "$tool_name" == "Bash" ]] || exit 0
+    is_shell_tool "$tool_name" || exit 0
 
     [[ -f "$METADATA_PATH" ]] || exit 0
 
@@ -746,6 +753,22 @@ run_powershell_script_capture() {
 
 # #region Main
 
+# Aggregate subcommands for hosts without per-hook "if" filters (Copilot CLI):
+# one PreToolUse and one PostToolUse entry run every relevant check in turn,
+# each still gated below, instead of spawning a process per hooks.json entry.
+if [[ "$SUBCOMMAND" == "pre" || "$SUBCOMMAND" == "post" ]]; then
+    if [[ "$SUBCOMMAND" == "pre" ]]; then
+        SUBS="validate-dax validate-measure"
+    else
+        SUBS="refresh-cache check-compat check-ri"
+    fi
+    for sub in $SUBS; do
+        printf '%s' "$STDIN_BUF" | bash "${BASH_SOURCE[0]:-$0}" "$sub"
+        [[ $? -eq 2 ]] && exit 2
+    done
+    exit 0
+fi
+
 # Re-apply the hooks.json "if" filters in-script. Those filters are a Claude Code
 # feature; agents that fire hooks by tool name only (Copilot CLI ignores "if")
 # would otherwise run every subcommand on every Bash command, and because a
@@ -779,7 +802,7 @@ case "$SUBCOMMAND" in
     check-compat)     cmd_check_compat ;;
     *)
         echo "Unknown subcommand: $SUBCOMMAND" >&2
-        echo "Available: validate-dax, validate-measure, refresh-cache, check-ri, check-compat" >&2
+        echo "Available: validate-dax, validate-measure, refresh-cache, check-ri, check-compat, pre, post" >&2
         exit 1
         ;;
 esac
