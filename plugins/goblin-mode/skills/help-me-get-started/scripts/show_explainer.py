@@ -79,9 +79,14 @@ def open_in_browser(path: Path):
         except Exception:
             pass
     else:
-        for browser in ("firefox", "xdg-open"):
+        for browser in ("xdg-open", "firefox"):
             try:
-                subprocess.run([browser, str(path)], timeout=8)
+                subprocess.Popen(
+                    [browser, str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
                 return
             except Exception:
                 continue
