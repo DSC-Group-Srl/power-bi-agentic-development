@@ -287,7 +287,7 @@ test('sidebar only: no pane in the default layout or a narrow terminal, and an i
 
 const lists = (ran: Ran, path: string) => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === path).length
 
-test('a failing workspace is listed once per refresh, and its error clears when another loads', { timeoutMs: 20_000 }, async ($, on) => {
+test('a failing workspace is listed once per refresh, and its error stays until that workspace loads', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const { clock } = world(on, { HOME: '/home/k' }, ran)
   failing.add('WS01.Workspace')
@@ -301,6 +301,10 @@ test('a failing workspace is listed once per refresh, and its error clears when 
   expect(lists(ran, 'WS01.Workspace') - before).toBe(1)
   failing.delete('WS01.Workspace')
   await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).toContain('error: Forbidden')
+  await clock.advance(600)
+  await ui.post({ press: 'W:WS01' }, { in: 'rows' })
   await clock.settle()
   expect(JSON.stringify(await ui.drawn())).not.toContain('error: Forbidden')
   await ui.unmount()
@@ -394,4 +398,50 @@ test('the selection stops riding along with prompts once the pane is hidden', { 
   const hidden = await $.prompt.submit({ text: 'what is this', context: [] } as any)
   expect(JSON.stringify(hidden)).not.toContain('WS00')
   await inline.unmount()
+})
+
+test('an empty workspace shows an empty marker and picks up an item Claude creates in it', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS05' }, { in: 'rows' })
+  await clock.settle()
+  let p = await rowsOf(ui)
+  expect(JSON.stringify(p.rows)).toContain('empty')
+  ITEMS['WS05.Workspace'] = [{ name: 'New.Notebook', id: UUID(950) }]
+  await $.tool.call({ tool: 'Bash', command: 'fab mkdir WS05.Workspace/New.Notebook' } as any)
+  await clock.settle()
+  p = await rowsOf(ui)
+  expect(p.rows.some((r: any) => r.id === 'W:WS05/New.Notebook')).toBe(true)
+  delete ITEMS['WS05.Workspace']
+  await ui.unmount()
+})
+
+test('a change keeps loaded folders and does not re-list them', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  await ui.post({ press: 'W:WS00/Ops.Folder' }, { in: 'rows' })
+  await clock.settle()
+  const before = lists(ran, 'WS00.Workspace/Ops.Folder')
+  await $.tool.call({ tool: 'Bash', command: 'fab set "WS00.Workspace/Sales.SemanticModel" -q description -i x -f' } as any)
+  await clock.settle()
+  expect(lists(ran, 'WS00.Workspace/Ops.Folder')).toBe(before)
+  const p = await rowsOf(ui)
+  expect(p.rows.some((r: any) => r.id === 'W:WS00/Ops.Folder/Deep.Notebook')).toBe(true)
+  await ui.unmount()
+})
+
+test('a commit message that mentions fab commands runs nothing', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  const before = ran.filter(a => a[0] === 'fab').length
+  await $.tool.call({ tool: 'Bash', command: "git commit -m \"$(cat <<'EOF'\nDocs: fab rm WS03.Workspace -f\nEOF\n)\"" } as any)
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "explain \\`fab rm WS04.Workspace -f\\`"' } as any)
+  await clock.settle()
+  expect(ran.filter(a => a[0] === 'fab').length).toBe(before)
+  await ui.unmount()
 })

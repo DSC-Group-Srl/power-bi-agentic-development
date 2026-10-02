@@ -1,8 +1,19 @@
 export type Invocation = { tool: 'databricks'; args: string[]; cwd: string; env: Record<string, string> }
 
 const SEPARATORS = new Set(['&&', '||', ';', '|', '&', '\n', '(', ')', '`'])
-const PREFIXES = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', 'time', '{', 'env', 'command', 'builtin', 'exec', 'nohup', 'sudo', 'nice', 'xargs', 'uvx', 'pipx', 'timeout'])
-const PREFIX_VALUED = new Set(['--from', '--with', '-u', '-n', '-I', '-k', '-s', '-P'])
+const PREFIXES = new Set(['do', 'then', 'else', 'elif', 'if', '!', 'time', '{', 'env', 'command', 'builtin', 'exec', 'nohup', 'sudo', 'nice', 'xargs', 'uvx', 'pipx', 'timeout', 'while', 'until'])
+const PREFIX_VALUED: Record<string, Set<string>> = {
+  sudo: new Set(['-u', '-g', '-C', '-h', '-p', '-U', '-r', '-t', '-D']),
+  timeout: new Set(['-k', '-s', '--kill-after', '--signal']),
+  xargs: new Set(['-n', '-I', '-P', '-L', '-s', '-d', '-E', '-a']),
+  env: new Set(['-u', '-C', '-S', '--unset', '--chdir']),
+  nice: new Set(['-n']),
+  exec: new Set(['-a']),
+  uvx: new Set(['--from', '--with', '-p', '--python']),
+  uv: new Set(['--from', '--with', '-p', '--python', '--project', '--directory']),
+  pipx: new Set(['--spec', '--python']),
+}
+const MAX_CALLS = 50
 const REDIRECT = /^(\d*>>?|\d*<|\d*>&\d*|&>>?)$/
 
 let drives = false
@@ -108,46 +119,98 @@ export function join(base: string, raw: string): string {
   return parts.join('/') || '/'
 }
 
+function heredocless(command: string): string {
+  const lines = command.split('\n')
+  const out: string[] = []
+  const pending: { word: string; tabs: boolean }[] = []
+  for (const line of lines) {
+    const head = pending[0]
+    if (head) {
+      if ((head.tabs ? line.replace(/^\t+/, '') : line) === head.word) pending.shift()
+      continue
+    }
+    out.push(line)
+    for (const m of line.matchAll(/<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g)) pending.push({ word: m[3] ?? '', tabs: m[1] === '-' })
+  }
+  return out.join('\n')
+}
+
 function substitutions(command: string): string[] {
   const out: string[] = []
-  for (let i = command.indexOf('$('); i >= 0; i = command.indexOf('$(', i + 2)) {
-    let depth = 0
-    for (let j = i + 1; j < command.length; j++) {
-      if (command[j] === '(') depth++
-      else if (command[j] === ')' && --depth === 0) {
-        out.push(command.slice(i + 2, j))
-        break
+  let single = false
+  let double = false
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (single) {
+      if (ch === "'") single = false
+      continue
+    }
+    if (ch === '\\') {
+      i++
+      continue
+    }
+    if (ch === "'" && !double) {
+      single = true
+      continue
+    }
+    if (ch === '"') {
+      double = !double
+      continue
+    }
+    if (ch === '#' && !double && (i === 0 || /\s/.test(command[i - 1] ?? ''))) {
+      while (i + 1 < command.length && command[i + 1] !== '\n') i++
+      continue
+    }
+    if (ch === '$' && command[i + 1] === '(') {
+      let depth = 0
+      for (let j = i + 1; j < command.length; j++) {
+        if (command[j] === '(') depth++
+        else if (command[j] === ')' && --depth === 0) {
+          out.push(command.slice(i + 2, j))
+          i = j
+          break
+        }
       }
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < command.length && command[j] !== '`') j += command[j] === '\\' ? 2 : 1
+      if (j < command.length) out.push(command.slice(i + 1, j))
+      i = j
     }
   }
-  for (const m of command.matchAll(/`([^`]+)`/g)) out.push(m[1] ?? '')
   return out
 }
 
 function expand(args: string[], loops: { name: string; words: string[] }[]): string[][] {
   let out = [args]
   for (const { name, words } of loops) {
+    if (!name) continue
     const source = `\\$\\{${name}\\}|\\$${name}(?![A-Za-z0-9_])`
     const used = new RegExp(source)
     const ref = new RegExp(source, 'g')
     if (!out.some(a => a.some(x => used.test(x)))) continue
-    out = out.flatMap(a => words.slice(0, 20).map(w => a.map(x => x.replace(ref, w))))
+    out = out.flatMap(a => words.map(w => a.map(x => x.replace(ref, w)))).slice(0, MAX_CALLS)
   }
   return out
 }
 
-function skipFlags(toks: string[], j: number): number {
-  while (j < toks.length && (toks[j] ?? '').startsWith('-') && !SEPARATORS.has(toks[j] ?? '')) j += PREFIX_VALUED.has(toks[j] ?? '') ? 2 : 1
+function skipFlags(toks: string[], j: number, word: string): number {
+  const valued = PREFIX_VALUED[word]
+  while (j < toks.length && (toks[j] ?? '').startsWith('-') && !SEPARATORS.has(toks[j] ?? '')) j += valued?.has(toks[j] ?? '') ? 2 : 1
   return j
 }
 
 export function invocations(command: string, sessionCwd: string): Invocation[] {
-  const toks = tokenize(command)
+  const text = heredocless(command)
+  const toks = tokenize(text)
   const found: Invocation[] = []
   const loops: { name: string; words: string[] }[] = []
+  const exported: Record<string, string> = {}
   let cwd = sessionCwd
   let start = true
-  for (let i = 0; i < toks.length; i++) {
+  for (let i = 0; i < toks.length && found.length < MAX_CALLS; i++) {
     const t = toks[i] ?? ''
     if (SEPARATORS.has(t)) {
       start = true
@@ -164,19 +227,33 @@ export function invocations(command: string, sessionCwd: string): Invocation[] {
       if (assign) {
         env[assign[1] ?? ''] = assign[2] ?? ''
         j++
-      } else if (word === 'uv' && toks[j + 1] === 'run') j = skipFlags(toks, j + 2)
+      } else if (word === 'uv' && toks[j + 1] === 'run') j = skipFlags(toks, j + 2, 'uv')
       else if (word === 'timeout') {
-        j = skipFlags(toks, j + 1)
+        j = skipFlags(toks, j + 1, word)
         if (/^\d/.test(toks[j] ?? '')) j++
-      } else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1)
+      } else if (word === 'while' || word === 'until') {
+        loops.push({ name: '', words: [] })
+        j++
+      } else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1, word)
       else break
     }
     const head = toks[j]?.split('/').pop()
     const dir = toks[j + 1]
+    if (head === 'export') {
+      for (let k = j + 1; k < toks.length && !SEPARATORS.has(toks[k] ?? ''); k++) {
+        const m = (toks[k] ?? '').match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s)
+        if (m) exported[m[1] ?? ''] = m[2] ?? ''
+      }
+      continue
+    }
     if (head === 'for' && toks[j + 2] === 'in' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(dir ?? '')) {
       const words: string[] = []
       for (let k = j + 3; k < toks.length && !SEPARATORS.has(toks[k] ?? '') && toks[k] !== 'do'; k++) words.push(toks[k] ?? '')
-      loops.push({ name: dir ?? '', words })
+      loops.push({ name: dir ?? '', words: words.slice(0, 20) })
+      continue
+    }
+    if (head === 'for' || head === 'select') {
+      loops.push({ name: '', words: [] })
       continue
     }
     if (head === 'done') {
@@ -198,14 +275,14 @@ export function invocations(command: string, sessionCwd: string): Invocation[] {
       }
       args.push(tok)
     }
-    for (const each of expand(args, loops)) found.push({ tool: head, args: each, cwd, env })
+    for (const each of expand(args, loops)) if (found.length < MAX_CALLS) found.push({ tool: head, args: each, cwd, env: { ...exported, ...env } })
     i = k - 1
   }
   const seen = new Set(found.map(f => f.args.join('\0')))
-  for (const body of substitutions(command)) {
+  for (const body of substitutions(text)) {
     for (const inv of invocations(body, cwd)) {
       const key = inv.args.join('\0')
-      if (seen.has(key)) continue
+      if (seen.has(key) || found.length >= MAX_CALLS) continue
       seen.add(key)
       found.push(inv)
     }
@@ -331,7 +408,13 @@ export function dbTargets(inv: Invocation): string[] {
       break
     case 'jobs':
       if (verb === 'list') out.push('S:jobs')
-      else id('J', flag(inv.args, '--job-id') || (/^\d+$/.test(a0) ? a0 : ''))
+      else id('J', flag(inv.args, '--job-id') || (/run/.test(verb) && verb !== 'run-now' ? '' : /^\d+$/.test(a0) ? a0 : ''))
+      break
+    case 'bundle':
+      if (verb === 'deploy' || verb === 'destroy') out.push('S:jobs', 'S:pipelines', 'S:dashboards', 'S:apps', 'S:workspace')
+      break
+    case 'sync':
+      out.push('S:workspace')
       break
     case 'pipelines':
       if (verb === 'list-pipelines') out.push('S:pipelines')

@@ -3,9 +3,9 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import type { Explorer, Target, TreeNode } from '../types'
 import { glyph, titleGlyph as dbTitle, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
-import { ancestors, empty, visible } from './tree'
+import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { chainOf, children, hostFrom, listCalls, PLACEHOLDER, roots } from './databricks'
-import { DB_TONE, dbKind, dbProfile, dbTargets, invocations, posix, tokenize, useDrives } from './parse'
+import { DB_TONE, dbKind, dbProfile, dbTargets, invocations, positionals, posix, tokenize, useDrives } from './parse'
 
 const STATE = { plugin: 'databricks-cli', key: 'explorer' } as const
 const NODES = { plugin: 'databricks-cli', key: 'nodes' } as const
@@ -17,6 +17,7 @@ const SORT = false
 const WINDOW = 400
 const DETAIL_ROWS = 12
 const HEADER = '#header'
+const MEMBER_VERBS = /^(create|delete|import|import-dir|mkdirs|rm|mv|rename|restore|deploy|destroy)/
 const BUSY_MAX_MS = 600_000
 const FLASH_MS = 2700
 const DOUBLE_MS = 450
@@ -31,7 +32,7 @@ const PLAIN_SPINNER = ['|', '/', '-', '\\']
 const FONT_SCRIPT =
   'if command -v fc-list >/dev/null 2>&1; then f=$(fc-list ":charset=$1" file | head -n1 | cut -d: -f1); ' +
   'else f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* 2>/dev/null | head -n1); fi; ' +
-  '[ -n "$f" ] || { echo missing; exit 0; }; m=$(date -r "$f" +%s 2>/dev/null || stat -f %m "$f"); p=$PPID; ' +
+  '[ -n "$f" ] || { echo missing; exit 0; }; m=$(stat -c %Z "$f" 2>/dev/null || stat -f %c "$f"); p=$PPID; ' +
   'while [ -n "$p" ] && [ "$p" -gt 1 ]; do c=$(ps -o comm= -p "$p" 2>/dev/null); c=$(basename "$c" 2>/dev/null | tr -d " "); case "$c" in ' +
   'ghostty|kitty|alacritty|Alacritty|foot|footclient|wezterm-gui|konsole|gnome-terminal-|xterm|urxvt|st|Terminal|iTerm2) ' +
   'e=$(ps -o etime= -p "$p" 2>/dev/null | awk -F\'[-:]\' \'{n=NF; s=$n+60*$(n-1); if (n>2) s+=3600*$(n-2); if (n>3) s+=86400*$(n-3); print s}\'); [ -n "$e" ] && [ $(( $(date +%s) - e )) -lt "$m" ] && echo stale || echo ok; exit 0;; esac; ' +
@@ -179,6 +180,18 @@ function patch($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>) {
   return put($, ex => ({ ...ex, ...fn(ex) }))
 }
 
+async function patchView($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>): Promise<void> {
+  for (let i = 0; ; i++) {
+    const last = i >= 20
+    const view = await $.state.get(STATE)
+    const cur: Explorer = { ...empty(), ...view.value, nodes: [] }
+    const change = fn(cur)
+    if (Object.keys(change).length === 0) return
+    const done = await $.state.set(STATE, { ...cur, ...change, nodes: [] }, last ? {} : { ifVersion: view.version })
+    if (done.isSet || last) return
+  }
+}
+
 const sameTarget = (a: Target | null, b: Target | null) => JSON.stringify(a) === JSON.stringify(b)
 
 function refresh($: EngineInterface): Promise<void> {
@@ -228,30 +241,34 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
   blink = $.clock.after(FLASH_MS, () => {
     if (generation !== mine) return
     blink = null
-    void patch($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {}))
+    void patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {}))
   })
   if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
 }
 
-async function markBusy($: EngineInterface, ids: string[], tone: string): Promise<void> {
-  if (ids.length === 0) return
+type Mark = { ids: string[]; tone: string }
+
+async function markBusy($: EngineInterface, marks: Mark[]): Promise<void> {
+  if (marks.every(m => m.ids.length === 0)) return
   const at = await $.clock.now()
-  await patch($, cur => {
+  await patchView($, cur => {
     const map = { ...cur.busy }
-    for (const id of ids) map[id] = { tone, n: (map[id]?.n ?? 0) + 1, at }
+    for (const { ids, tone } of marks) for (const id of ids) map[id] = { tone, n: (map[id]?.n ?? 0) + 1, at }
     return { busy: map }
   })
 }
 
-async function clearBusy($: EngineInterface, ids: string[]): Promise<void> {
-  if (ids.length === 0) return
-  await patch($, cur => {
+async function clearBusy($: EngineInterface, marks: Mark[]): Promise<void> {
+  if (marks.every(m => m.ids.length === 0)) return
+  await patchView($, cur => {
     const map = { ...cur.busy }
-    for (const id of ids) {
-      const left = (map[id]?.n ?? 1) - 1
-      const entry = map[id]
-      if (left > 0 && entry) map[id] = { ...entry, n: left }
-      else delete map[id]
+    for (const { ids } of marks) {
+      for (const id of ids) {
+        const left = (map[id]?.n ?? 1) - 1
+        const entry = map[id]
+        if (left > 0 && entry) map[id] = { ...entry, n: left }
+        else delete map[id]
+      }
     }
     return { busy: map }
   })
@@ -261,7 +278,7 @@ async function point($: EngineInterface, target: Target | null, opened: 'asked' 
   const moved = !sameTarget((await get($)).target, target)
   activeProfile = target?.profile ?? ''
   if (moved) await put($, () => ({ ...empty(), target }))
-  else if (fresh) await patch($, () => ({ expanded: [], query: '', selected: '', detail: [], cursor: '' }))
+  else if (fresh) await patchView($, () => ({ expanded: [], query: '', selected: '', detail: [], cursor: '' }))
   if (opened === 'asked' || (moved && target)) {
     const title = titleFor(target)
     if (opened === 'asked') {
@@ -315,6 +332,7 @@ async function implicitProfile($: EngineInterface): Promise<string> {
 }
 
 const loading = new Map<string, Promise<boolean>>()
+let statusOwner = ''
 let activeProfile = ''
 
 function errorText(err: unknown): string {
@@ -337,7 +355,11 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
     const open = new Set(ex.expanded)
     const pending = new Set(ex.nodes.filter(c => c.kind === PLACEHOLDER).map(c => c.parent))
     const byId = new Map(ex.nodes.map(n => [n.id, n]))
-    const todo = ex.nodes.filter(n => open.has(n.id) && pending.has(n.id) && !failed.has(n.id) && (!root || ancestors(ex.nodes, n.id, byId).includes(root)))
+    const todo = ex.nodes.filter(n => {
+      if (!open.has(n.id) || !pending.has(n.id) || failed.has(n.id)) return false
+      const chain = ancestors(ex.nodes, n.id, byId)
+      return chain.every(a => open.has(a)) && (!root || chain.includes(root))
+    })
     if (todo.length === 0) return
     await pool(todo, async n => {
       if (!(await expandNode($, n))) failed.add(n.id)
@@ -347,7 +369,7 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
 async function doRefresh($: EngineInterface): Promise<void> {
   const target = (await get($)).target
   if (!target) return
-  await patch($, () => ({ status: 'loading' }))
+  await patchView($, () => ({ status: 'loading' }))
   try {
     await patch($, cur => (sameTarget(cur.target, target) ? { nodes: roots(), expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
     await expandOpen($)
@@ -355,18 +377,9 @@ async function doRefresh($: EngineInterface): Promise<void> {
     await patch($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
   }
 }
-async function listChildren($: EngineInterface, n: TreeNode, profile: string): Promise<{ kids: TreeNode[]; failure: string }> {
-  const runs = await Promise.all(
-    listCalls(n).map(tail =>
-      dbRun($, tail, profile).then(
-        out => ({ out, failure: '' }),
-        (err: unknown) => ({ out: '', failure: err instanceof Error ? err.message : String(err) }),
-      ),
-    ),
-  )
-  const failure = runs.find(r => r.failure)?.failure ?? ''
-  if (failure && runs.every(r => !r.out)) throw new Error(failure)
-  return { kids: children(n, runs.map(r => r.out), await hostOf($, profile)), failure }
+async function listChildren($: EngineInterface, n: TreeNode, profile: string): Promise<TreeNode[]> {
+  const outputs = await Promise.all(listCalls(n).map(tail => dbRun($, tail, profile)))
+  return children(n, outputs, await hostOf($, profile || (await implicitProfile($))))
 }
 
 const rerun = new Map<string, Promise<boolean>>()
@@ -377,26 +390,29 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
   if (running) {
     const next =
       rerun.get(key) ??
-      running.then(() => {
-        rerun.delete(key)
-        return reloadNode($, id)
-      })
+      running.then(
+        () => {
+          rerun.delete(key)
+          return reloadNode($, id)
+        },
+        () => {
+          rerun.delete(key)
+          return reloadNode($, id)
+        },
+      )
     rerun.set(key, next)
     return next
   }
   const job = (async () => {
+    const pending = loading.get(`${activeProfile}|${id}`)
+    if (pending) await pending.catch(() => false)
     const ex = await get($)
     const target = ex.target
     const n = ex.nodes.find(x => x.id === id)
-    if (!n || !ex.nodes.some(c => c.parent === n.id && c.kind !== PLACEHOLDER)) return true
+    if (!n || !isLoaded(ex.nodes, n.id)) return true
     try {
-      const { kids, failure } = await listChildren($, n, target?.profile ?? '')
-      await patch($, cur => {
-        if (!sameTarget(cur.target, target)) return {}
-        const byId = new Map(cur.nodes.map(x => [x.id, x]))
-        const keep = cur.nodes.filter(x => x.id === n.id || !ancestors(cur.nodes, x.id, byId).includes(n.id))
-        return { nodes: [...keep, ...kids], ...(failure ? { status: `error: ${failure}` } : {}) }
-      })
+      const kids = await listChildren($, n, target?.profile ?? '')
+      await patch($, cur => (sameTarget(cur.target, target) ? { nodes: merge(cur.nodes, n.id, kids) } : {}))
     } catch {
       return false
     }
@@ -416,15 +432,18 @@ function expandNode($: EngineInterface, n: TreeNode): Promise<boolean> {
     const target = ex.target
     if (!ex.nodes.some(c => c.parent === n.id && c.kind === PLACEHOLDER)) return true
     try {
-      const { kids, failure } = await listChildren($, n, target?.profile ?? '')
-      await patch($, cur =>
-        sameTarget(cur.target, target)
-          ? { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? kids : [x])), ...(failure ? { status: `error: ${failure}` } : cur.status.startsWith('error') ? { status: '' } : {}) }
-          : {},
-      )
+      const kids = await listChildren($, n, target?.profile ?? '')
+      const owned = statusOwner === n.id
+      if (owned) statusOwner = ''
+      await patch($, cur => {
+        if (!sameTarget(cur.target, target)) return {}
+        if (!cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)) return owned ? { status: '' } : {}
+        return { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...(owned ? { status: '' } : {}) }
+      })
       return true
     } catch (err) {
-      await patch($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+      statusOwner = n.id
+      await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
       return false
     }
   })().finally(() => loading.delete(key))
@@ -436,7 +455,7 @@ async function reveal($: EngineInterface, chain: string[]): Promise<void> {
   for (const id of chain) {
     const n = (await get($)).nodes.find(x => x.id === id)
     if (!n) return
-    await patch($, cur => ({ expanded: [...new Set([...cur.expanded, n.id])] }))
+    await patchView($, cur => ({ expanded: [...new Set([...cur.expanded, n.id])] }))
     await expandNode($, n)
   }
 }
@@ -448,7 +467,7 @@ async function openLocal($: EngineInterface, ex: Explorer, n: TreeNode): Promise
   if (webUrl(ex, n)) await openUrl($, webUrl(ex, n))
 }
 async function select($: EngineInterface, n: TreeNode): Promise<void> {
-  if (n.kind === PLACEHOLDER) return
+  if (n.kind === PLACEHOLDER || n.kind === EMPTY) return
   const ex = await get($)
   const isLeaf = !ex.nodes.some(c => c.parent === n.id)
   await patch($, cur => {
@@ -458,7 +477,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   })
   if (!isLeaf && (await expandNode($, n))) await expandOpen($, n.id)
   const detail = [`${n.kind.replace(/^section-/, '').replace(/_/g, ' ')} ${n.name}`, ...(n.path ? [`cli: ${n.path}`] : []), ...(n.note ? [n.note] : [])]
-  await patch($, () => ({ detail }))
+  await patchView($, () => ({ detail }))
 }
 function contextFor(ex: Explorer, n: TreeNode): string {
   return [
@@ -469,13 +488,20 @@ function contextFor(ex: Explorer, n: TreeNode): string {
     ...(n.url ? [`url: ${n.url}`] : []),
   ].join('\n')
 }
+function changesMembers(args: string[]): boolean {
+  const [group = '', verb = ''] = positionals(args)
+  if (group === 'fs') return false
+  if (group === 'sync') return true
+  return MEMBER_VERBS.test(verb) || (verb === 'update' && args.some(a => a.startsWith('--new-name')))
+}
+
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
-    void detectGlyphs($)
-    await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
+    void detectGlyphs($).then(() => $.ui.invalidate('ui.render'))
+    await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Databricks explorer; args: [profile]' })
     const ex = await get($)
     activeProfile = ex.target?.profile ?? ''
@@ -487,7 +513,6 @@ export const register: Register = (on, options) => {
     if (e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-explorer.' }
     if (e.presentation && e.presentation.columns < 110) return { text: 'The Databricks explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-explorer.' }
     noDock = false
-    await detectGlyphs($)
     const [profile = ''] = tokenize(e.args ?? '')
     await point($, { kind: 'databricks', profile }, 'asked', true)
     await refresh($)
@@ -502,33 +527,40 @@ export const register: Register = (on, options) => {
       return kind ? [{ inv, kind }] : []
     })
     if (calls.length === 0) return next(e)
+    if (closed || noDock) return next(e)
     const ex = await get($)
     const have = new Set(ex.nodes.map(n => n.id))
-    const marks = calls.map(c => ({ ids: [HEADER, ...dbTargets(c.inv).filter(id => have.has(id))], tone: DB_TONE[c.kind] }))
+    const marks: Mark[] = calls.map(c => ({ ids: [HEADER, ...dbTargets(c.inv).filter(id => have.has(id))], tone: DB_TONE[c.kind] }))
     let result: Awaited<ReturnType<typeof next>>
     try {
-      for (const m of marks) await markBusy($, m.ids, m.tone)
+      await markBusy($, marks)
       result = await next(e)
     } finally {
-      for (const m of marks) await clearBusy($, m.ids)
+      await clearBusy($, marks)
     }
     if (result.deny || result.isError || closed || noDock) return result
+    const stale = new Set(loading.keys())
     void (async () => {
       const fallback = await implicitProfile($)
-      const explicit = calls.map(c => dbProfile(c.inv) || c.inv.env.DATABRICKS_CONFIG_PROFILE || '').find(Boolean)
+      const canon = (p: string) => p || fallback || 'DEFAULT'
+      const resolved = (inv: (typeof calls)[number]['inv']) => dbProfile(inv) || inv.env.DATABRICKS_CONFIG_PROFILE || ''
+      const own = calls.filter(c => !c.inv.env.DATABRICKS_HOST && !c.inv.env.DATABRICKS_TOKEN)
+      const first = own[0]
+      if (!first) return
       const current = (await get($)).target
-      const profile = explicit ?? (current ? current.profile : fallback)
+      const want = resolved(first.inv)
+      const profile = current && canon(current.profile) === canon(want) ? current.profile : want
       const moved = await point($, { kind: 'databricks', profile }, 'unasked')
       if (moved || (await get($)).nodes.length === 0) await refresh($)
-      const mine = calls.filter(c => (dbProfile(c.inv) || c.inv.env.DATABRICKS_CONFIG_PROFILE || fallback) === profile)
+      const mine = own.filter(c => canon(resolved(c.inv)) === canon(profile))
       const prior = await get($)
       const before = new Set(prior.expanded)
-      const loaded = new Set(prior.nodes.filter(n => n.kind !== PLACEHOLDER).map(n => n.parent))
       const targets = [...new Set(mine.flatMap(c => dbTargets(c.inv)))]
       await pool(targets, id => reveal($, chainOf(id)))
       const reloads = new Set<string>()
       for (const c of mine) {
         if (c.kind !== 'modify' && c.kind !== 'upload') continue
+        if (!changesMembers(c.inv.args)) continue
         for (const id of dbTargets(c.inv)) {
           const chain = chainOf(id)
           const parent = chain[chain.length - 1]
@@ -536,14 +568,20 @@ export const register: Register = (on, options) => {
           if (id.startsWith('S:')) reloads.add(id)
         }
       }
-      await pool([...reloads].filter(id => loaded.has(id)), id => reloadNode($, id))
+      await pool([...reloads].filter(id => isLoaded(prior.nodes, id) || stale.has(`${activeProfile}|${id}`)), id => reloadNode($, id))
       const fresh = await get($)
       const present = new Set(fresh.nodes.map(n => n.id))
+      const byTone = new Map<string, { touched: string[]; opened: string[] }>()
       for (const c of mine) {
         const touched = dbTargets(c.inv).filter(id => present.has(id))
         const opened = touched.flatMap(id => chainOf(id)).filter(id => !before.has(id) && present.has(id))
-        await flash($, touched, opened, DB_TONE[c.kind])
+        const tone = DB_TONE[c.kind]
+        const group = byTone.get(tone) ?? { touched: [], opened: [] }
+        group.touched.push(...touched)
+        group.opened.push(...opened)
+        byTone.set(tone, group)
       }
+      for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
     })().catch(() => undefined)
     return result
   })
@@ -560,7 +598,7 @@ export const register: Register = (on, options) => {
     const ex = await get($)
     if (typeof data.scrollTo === 'number') {
       const to = Math.round(Math.max(0, Math.min(1, data.scrollTo)) * view.max)
-      if (to !== ex.scroll) await patch($, () => ({ scroll: to }))
+      if (to !== ex.scroll) await patchView($, () => ({ scroll: to }))
       return {}
     }
     if (typeof data.copy === 'string') {
@@ -571,7 +609,7 @@ export const register: Register = (on, options) => {
     if (typeof data.press === 'string') {
       const n = ex.nodes.find(x => x.id === data.press)
       if (!n) return {}
-      if (ex.scroll === null) await patch($, () => ({ scroll: view.from }))
+      if (ex.scroll === null) await patchView($, () => ({ scroll: view.from }))
       if (data.ctrl) await openWeb($, ex, n)
       else if (data.shift) await openLocal($, ex, n)
       else await press($, n)
@@ -583,7 +621,7 @@ export const register: Register = (on, options) => {
     const cur = rows[at]
     const move = (d: number) => {
       const target = rows[Math.max(0, Math.min(rows.length - 1, (at < 0 ? 0 : at) + d))]
-      return target ? patch($, () => ({ cursor: target.node.id, scroll: null })) : Promise.resolve()
+      return target ? patchView($, () => ({ cursor: target.node.id, scroll: null })) : Promise.resolve()
     }
     if (data.key === 'up' || data.key === 'k') await move(-1)
     else if (data.key === 'down' || data.key === 'j') await move(1)
@@ -594,8 +632,8 @@ export const register: Register = (on, options) => {
     else if (cur && (data.key === 'y' || data.key === 'Y')) await copyOf($, cur.node.path || cur.node.name, e.surface)
     else if (cur && (data.key === 'right' || data.key === 'l') && !cur.leaf && !cur.open) await select($, cur.node)
     else if (cur && (data.key === 'left' || data.key === 'h')) {
-      if (!cur.leaf && cur.open) await patch($, x => ({ expanded: x.expanded.filter(id => id !== cur.node.id) }))
-      else if (cur.node.parent) await patch($, () => ({ cursor: cur.node.parent }))
+      if (!cur.leaf && cur.open) await patchView($, x => ({ expanded: x.expanded.filter(id => id !== cur.node.id) }))
+      else if (cur.node.parent) await patchView($, () => ({ cursor: cur.node.parent }))
     } else if (cur && (data.key === ' ' || data.key === 'return')) await (data.key === 'return' && cur.leaf ? openLocal($, ex, cur.node) : select($, cur.node))
     return {}
   })
@@ -603,7 +641,7 @@ export const register: Register = (on, options) => {
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
-    if (to !== ex.scroll) await patch($, () => ({ scroll: to }))
+    if (to !== ex.scroll) await patchView($, () => ({ scroll: to }))
     return {}
   })
 
@@ -668,7 +706,7 @@ export const register: Register = (on, options) => {
       const isBright = brightSet.has(n.id)
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
-      const faded = n.hidden || n.kind === 'placeholder'
+      const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
       const tone = ex.flashTones[n.id] ?? 'orange'
       const busy = busyTone(n.id)
       const left: Seg[] = [
@@ -678,7 +716,7 @@ export const register: Register = (on, options) => {
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
       if (busy) left.push(spin(busy))
-      return { id: n.kind === 'placeholder' ? '' : n.id, left: clean(left), right: note ? [{ t: note, c: '#6e6e7a' }] : [] }
+      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right: note ? [{ t: note, c: '#6e6e7a' }] : [] }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
     const specs: RowSpec[] = [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
@@ -707,8 +745,8 @@ export const register: Register = (on, options) => {
           </Box>
           <Box flexDirection="row" gap={2}>
             <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => void refresh($)} />
-            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patch($, () => ({ expanded: [] }))} />
-            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patch($, () => ({ selected: '', detail: [] }))} />}
+            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patchView($, () => ({ expanded: [] }))} />
+            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patchView($, () => ({ selected: '', detail: [] }))} />}
             <Text> </Text>
           </Box>
         </Box>
@@ -721,11 +759,11 @@ export const register: Register = (on, options) => {
               submitLabel="jump"
               autoFocus
               value={ex.query}
-              onInput={(v: string) => void patch($, () => ({ query: v }))}
+              onInput={(v: string) => void patchView($, () => ({ query: v }))}
               onSubmit={(v: string) => void patch($, cur => jumpTo(cur, v))}
             />
           </Box>
-          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patch($, () => ({ query: '' }))} /> : null}
+          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patchView($, () => ({ query: '' }))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#6b7280', hoverBg: '#79808e', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />

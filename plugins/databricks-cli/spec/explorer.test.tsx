@@ -31,6 +31,7 @@ const DATA: Record<string, unknown> = {
 }
 
 const truncated = new Set<string>()
+const failingDb = new Set<string>()
 let gate: { key: string; wait: Promise<void> } | null = null
 
 function world(on: any, env: Record<string, string>, ran: Ran, copied: string[]) {
@@ -71,6 +72,7 @@ function world(on: any, env: Record<string, string>, ran: Ran, copied: string[])
     if (argv[0] === 'databricks') {
       const key = argv.slice(1).filter((a, i, all) => a !== '-o' && all[i - 1] !== '-o' && a !== '-p' && all[i - 1] !== '-p' && !a.startsWith('--omit-')).join(' ')
       if (gate && gate.key === key) await gate.wait
+      if (failingDb.has(key)) return { value: { exitCode: 1, stdout: '', stderr: 'PERMISSION_DENIED', isStdoutTruncated: false, isStderrTruncated: false } }
       if (truncated.has(key)) return { value: { exitCode: 0, stdout: JSON.stringify(DATA[key] ?? []).slice(0, 20), stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
       return ok(JSON.stringify(DATA[key] ?? []))
     }
@@ -263,5 +265,72 @@ test('a job Claude creates reloads the open Jobs section, and /Workspace paths m
   await clock.advance(50)
   const p = await rowsOf(ui)
   expect(JSON.stringify(p.rows.find((r: any) => r.id === 'WS:/Shared/etl'))).toContain('"sh":"teal"')
+  await ui.unmount()
+})
+
+test('plain calls count under DATABRICKS_CONFIG_PROFILE and after an explicit -p DEFAULT', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k', DATABRICKS_CONFIG_PROFILE: 'dev' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  const cats = () => ran.filter(a => a[1] === 'catalogs' && a[2] === 'list').length
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  await clock.settle()
+  expect(cats()).toBe(1)
+  await ui.unmount()
+})
+
+test('-p DEFAULT and plain calls address the same workspace', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  await $.tool.call({ tool: 'Bash', command: 'databricks -p DEFAULT current-user me' } as any)
+  await clock.settle()
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  await clock.settle()
+  expect(ran.filter(a => a[1] === 'catalogs' && a[2] === 'list').length).toBe(1)
+  await ui.unmount()
+})
+
+test('a schema whose volumes listing fails keeps retrying instead of showing only tables', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  failingDb.add('volumes list main sales')
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:catalog', 'UC:main', 'UC:main.sales']) {
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  expect(JSON.stringify(await ui.drawn())).toContain('PERMISSION_DENIED')
+  expect(ids(await rowsOf(ui))).not.toContain('UC:main.sales.orders')
+  failingDb.clear()
+  await clock.advance(600)
+  await ui.post({ press: 'UC:main.sales' }, { in: 'rows' })
+  await clock.settle()
+  await clock.advance(600)
+  await ui.post({ press: 'UC:main.sales' }, { in: 'rows' })
+  await clock.settle()
+  expect(ids(await rowsOf(ui))).toContain('UC:main.sales.orders')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('PERMISSION_DENIED')
+  await ui.unmount()
+})
+
+test('job runs re-list nothing, a bundle deploy reloads the open Jobs section', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'S:jobs' }, { in: 'rows' })
+  await clock.settle()
+  const jobs = () => ran.filter(a => a[1] === 'jobs' && a[2] === 'list').length
+  const before = jobs()
+  await $.tool.call({ tool: 'Bash', command: 'databricks jobs run-now 105 && databricks jobs cancel-run 77' } as any)
+  await clock.settle()
+  expect(jobs()).toBe(before)
+  await $.tool.call({ tool: 'Bash', command: 'databricks bundle deploy -t dev' } as any)
+  await clock.settle()
+  expect(jobs()).toBe(before + 1)
   await ui.unmount()
 })

@@ -31,6 +31,48 @@ function childrenOf(nodes: TreeNode[]): Map<string, TreeNode[]> {
   return kids
 }
 
+export const EMPTY = 'empty'
+
+export function emptyMark(parent: string): TreeNode {
+  return { id: `${parent}/∅`, parent, kind: EMPTY, name: 'empty', path: '', hidden: false, sig: '', note: '' }
+}
+
+export function isLoaded(nodes: TreeNode[], id: string): boolean {
+  let any = false
+  for (const n of nodes) {
+    if (n.parent !== id) continue
+    if (n.kind === 'placeholder') return false
+    any = true
+  }
+  return any
+}
+
+export function merge(nodes: TreeNode[], parent: string, kids: TreeNode[]): TreeNode[] {
+  const under = childrenOf(nodes)
+  const subtree = (id: string, out: TreeNode[] = []): TreeNode[] => {
+    for (const c of under.get(id) ?? []) {
+      out.push(c)
+      subtree(c.id, out)
+    }
+    return out
+  }
+  const known = new Set(nodes.map(n => n.id))
+  const loaded = (id: string) => {
+    const cs = under.get(id) ?? []
+    return cs.length > 0 && !cs.some(c => c.kind === 'placeholder')
+  }
+  const keep = new Set(kids.filter(k => k.kind !== 'placeholder' && known.has(k.id) && loaded(k.id)).map(k => k.id))
+  const gone = new Set(subtree(parent).map(n => n.id))
+  const out = nodes.filter(n => !gone.has(n.id))
+  for (const k of kids) {
+    if (k.kind === 'placeholder' && keep.has(k.parent)) continue
+    out.push(k)
+    if (keep.has(k.id)) subtree(k.id, out)
+  }
+  if (kids.length === 0) out.push(emptyMark(parent))
+  return out
+}
+
 export function ancestors(nodes: TreeNode[], id: string, byId?: Map<string, TreeNode>): string[] {
   const map = byId ?? new Map(nodes.map(n => [n.id, n]))
   const out: string[] = []

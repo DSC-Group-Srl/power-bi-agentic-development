@@ -84,7 +84,7 @@ function item(type: string): Icon {
 export function glyph(n: TreeNode, tier: Tier): Glyph {
   current = { tier, kind: n.kind }
   const fabricFont: Tier = tier
-  if (n.kind === 'placeholder') return { char: '…', color: hex(GLYPH_DIM) }
+  if (n.kind === 'placeholder' || n.kind === 'empty') return { char: n.kind === 'empty' ? '∅' : '…', color: hex(GLYPH_DIM) }
   if (n.kind === 'workspace') return { ...pick({ fabric: 0xf203e, nerd: '\u{f0253}', rgb: GLYPH_DIM }, fabricFont), label: hex(WORKSPACE) }
   if (n.kind === 'fabric folder') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, fabricFont)
   if (FAB_ITEMS[n.kind]) {

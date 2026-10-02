@@ -41,6 +41,7 @@ const ICONS: Record<string, Icon> = {
   pipeline: { db: 'pipeline', nerd: '\u{f07e5}', rgb: [52, 211, 153], plain: '⇶' },
   app: { db: 'ui_apps', nerd: '\u{f003b}', rgb: [251, 113, 133], plain: '◈' },
   placeholder: { db: '', nerd: '\u{f0453}', rgb: [110, 110, 122], plain: '…' },
+  empty: { db: '', nerd: '∅', rgb: [110, 110, 122], plain: '∅' },
 }
 const FALLBACK: Icon = { db: 'file', nerd: '\u{f0214}', rgb: SLATE, plain: '·' }
 
