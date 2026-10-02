@@ -4,7 +4,7 @@ type Ran = string[][]
 const opens: unknown[] = []
 const closes: unknown[] = []
 const PLUGIN = 'databricks-cli'
-const PANE = 'databricks-explorer'
+const PANE = 'databricks-pane'
 const HOST = 'https://dbc-demo.cloud.databricks.com'
 const DATA: Record<string, unknown> = {
   'workspace list /': [

@@ -45,7 +45,7 @@
     },
     {
       "name": "fabric-cli",
-      "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric explorer pane.",
+      "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric pane.",
       "source": "./plugins/fabric-cli"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "databricks-cli",
-      "description": "Browse Databricks workspaces and Unity Catalog in an explorer pane that follows the databricks CLI.",
+      "description": "Browse Databricks workspaces and Unity Catalog in a pane that follows the databricks CLI.",
       "source": "./plugins/databricks-cli"
     },
     {

@@ -10,11 +10,11 @@ import { fabTouched } from './touch'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
 const NODES = { plugin: 'fabric-cli', key: 'nodes' } as const
-const PANE = 'fabric-explorer'
+const PANE = 'fabric-pane'
 const TITLE = 'Fabric'
 const TITLE_GLYPH = { fabric: 0xf2292, nerd: 'F', plain: 'F' }
 const TITLE_COLOR = '#2dd4bf'
-const HINT = 'waiting for a fab command, or /fabric-explorer'
+const HINT = 'waiting for a fab command, or /fabric-pane'
 const SORT = false
 const WINDOW = 400
 const DETAIL_ROWS = 12
@@ -201,7 +201,7 @@ async function get($: EngineInterface): Promise<Explorer> {
 
 async function put($: EngineInterface, fn: (ex: Explorer) => Explorer): Promise<void> {
   for (let i = 0; ; i++) {
-    if (i >= 50) throw new Error('explorer state is busy; try again')
+    if (i >= 50) throw new Error('pane state is busy; try again')
     const [view, tree] = await Promise.all([$.state.get(STATE), $.state.get(NODES)])
     const cur: Explorer = { ...empty(), ...view.value, nodes: tree.value ?? [] }
     const next = fn(cur)
@@ -223,7 +223,7 @@ function patch($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>) {
 
 async function patchView($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>): Promise<void> {
   for (let i = 0; ; i++) {
-    if (i >= 50) throw new Error('explorer state is busy; try again')
+    if (i >= 50) throw new Error('pane state is busy; try again')
     const view = await $.state.get(STATE)
     const cur: Explorer = { ...empty(), ...view.value, nodes: [] }
     const change = fn(cur)
@@ -563,7 +563,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
 
 function contextFor(ex: Explorer, n: TreeNode): string {
   return [
-    'The user has this Fabric item selected in the Fabric explorer; "this", "it" or "the selected" in the prompt likely refers to it.',
+    'The user has this Fabric item selected in the Fabric pane; "this", "it" or "the selected" in the prompt likely refers to it.',
     `${n.kind}: ${n.name}`,
     `fab path: ${n.path}`,
     ...ex.detail.slice(2),
@@ -643,7 +643,7 @@ export const register: Register = (on, options) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
     void detectGlyphs($).then(() => $.ui.invalidate('ui.render'))
     await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
-    await $.command.register({ name: PANE, description: 'Open the Fabric explorer; args: [workspace]' })
+    await $.command.register({ name: PANE, description: 'Open the Fabric pane; args: [workspace]' })
     const ex = await get($)
     if (ex.target) void openPane($, { id: PANE, title: titleFor(ex.target) })
     return next(e)
@@ -651,14 +651,14 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: PANE }, async ($, e) => {
     const terminalOnly = !(await $.session.surfaces().catch(() => ['terminal'])).some(x => x !== 'terminal')
-    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-explorer.' }
-    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Fabric explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-explorer.' }
+    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric pane shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-pane.' }
+    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Fabric pane shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-pane.' }
     noDock = false
     const [workspace] = tokenize(e.args ?? '')
     await point($, { kind: 'fabric' }, 'asked', true)
     await refresh($)
     if (workspace) await reveal($, workspace.replace(/\.Workspace$/i, ''))
-    return { text: workspace ? `Fabric explorer on ${workspace}.` : 'Fabric explorer open.' }
+    return { text: workspace ? `Fabric pane on ${workspace}.` : 'Fabric pane open.' }
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {

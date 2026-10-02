@@ -9,10 +9,10 @@ import { DB_TONE, dbKind, dbProfile, dbTargets, type Invocation, invocations, po
 
 const STATE = { plugin: 'databricks-cli', key: 'explorer' } as const
 const NODES = { plugin: 'databricks-cli', key: 'nodes' } as const
-const PANE = 'databricks-explorer'
+const PANE = 'databricks-pane'
 const TITLE = 'Databricks'
 const TITLE_COLOR = '#ff3621'
-const HINT = 'waiting for a databricks command, or /databricks-explorer'
+const HINT = 'waiting for a databricks command, or /databricks-pane'
 const SORT = false
 const WINDOW = 400
 const DETAIL_ROWS = 12
@@ -180,7 +180,7 @@ async function get($: EngineInterface): Promise<Explorer> {
 
 async function put($: EngineInterface, fn: (ex: Explorer) => Explorer): Promise<void> {
   for (let i = 0; ; i++) {
-    if (i >= 50) throw new Error('explorer state is busy; try again')
+    if (i >= 50) throw new Error('pane state is busy; try again')
     const [view, tree] = await Promise.all([$.state.get(STATE), $.state.get(NODES)])
     const cur: Explorer = { ...empty(), ...view.value, nodes: tree.value ?? [] }
     const next = fn(cur)
@@ -202,7 +202,7 @@ function patch($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>) {
 
 async function patchView($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>): Promise<void> {
   for (let i = 0; ; i++) {
-    if (i >= 50) throw new Error('explorer state is busy; try again')
+    if (i >= 50) throw new Error('pane state is busy; try again')
     const view = await $.state.get(STATE)
     const cur: Explorer = { ...empty(), ...view.value, nodes: [] }
     const change = fn(cur)
@@ -514,7 +514,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
 }
 function contextFor(ex: Explorer, n: TreeNode): string {
   return [
-    'The user has this Databricks object selected in the Databricks explorer; "this", "it" or "the selected" in the prompt likely refers to it.',
+    'The user has this Databricks object selected in the Databricks pane; "this", "it" or "the selected" in the prompt likely refers to it.',
     `${n.kind.replace(/_/g, ' ')}: ${n.name}`,
     ...(n.path ? [`databricks CLI argument: ${n.path}`] : []),
     ...(ex.target?.profile ? [`profile: ${ex.target.profile}`] : []),
@@ -591,7 +591,7 @@ export const register: Register = (on, options) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
     void detectGlyphs($).then(() => $.ui.invalidate('ui.render'))
     await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
-    await $.command.register({ name: PANE, description: 'Open the Databricks explorer; args: [profile]' })
+    await $.command.register({ name: PANE, description: 'Open the Databricks pane; args: [profile]' })
     const ex = await get($)
     activeProfile = ex.target?.profile ?? ''
     if (ex.target) void openPane($, { id: PANE, title: titleFor(ex.target) })
@@ -600,13 +600,13 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: PANE }, async ($, e) => {
     const terminalOnly = !(await $.session.surfaces().catch(() => ['terminal'])).some(x => x !== 'terminal')
-    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-explorer.' }
-    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Databricks explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-explorer.' }
+    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks pane shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-pane.' }
+    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Databricks pane shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-pane.' }
     noDock = false
     const [profile = ''] = tokenize(e.args ?? '')
     await point($, { kind: 'databricks', profile }, 'asked', true)
     await refresh($)
-    return { text: profile ? `Databricks explorer on profile ${profile}.` : 'Databricks explorer open.' }
+    return { text: profile ? `Databricks pane on profile ${profile}.` : 'Databricks pane open.' }
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {

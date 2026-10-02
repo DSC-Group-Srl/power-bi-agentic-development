@@ -1,7 +1,7 @@
 {
   "name": "fabric-cli",
   "version": "26.31.5",
-  "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric explorer pane that follows what fab does.",
+  "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric pane that follows what fab does.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"

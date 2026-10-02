@@ -4,7 +4,7 @@ type Ran = string[][]
 const opens: unknown[] = []
 const closes: unknown[] = []
 const PLUGIN = 'fabric-cli'
-const PANE = 'fabric-explorer'
+const PANE = 'fabric-pane'
 const UUID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const WORKSPACES = [...Array.from({ length: 60 }, (_, i) => ({ name: `WS${String(i).padStart(2, '0')}.Workspace`, id: UUID(i + 1) })), { name: 'My WS.Workspace', id: UUID(99) }]
 const ITEMS: Record<string, { name: string; id: string }[]> = {
