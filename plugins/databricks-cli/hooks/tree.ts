@@ -18,6 +18,7 @@ export function empty(): Explorer {
     busy: {},
     flashDim: [],
     scroll: null,
+    root: '',
   }
 }
 
@@ -97,7 +98,7 @@ function sorted(list: TreeNode[]): TreeNode[] {
   )
 }
 
-export function visible(ex: Explorer, sort = false): Row[] {
+export function visible(ex: Explorer, sort = false, root = ''): Row[] {
   const kids = childrenOf(ex.nodes)
   const q = ex.query.trim().toLowerCase()
   let keep: Set<string> | null = null
@@ -125,6 +126,6 @@ export function visible(ex: Explorer, sort = false): Row[] {
       if (isOpen) walk(n.id, depth + 1)
     }
   }
-  walk('', 0)
+  walk(root, 0)
   return rows
 }

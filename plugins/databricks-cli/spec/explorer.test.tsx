@@ -387,3 +387,26 @@ test('follow off: Claude touching objects far away or in a catalog above never m
   expect((await rowsOf(ui)).rows[0]?.id).not.toBe(top)
   await ui.unmount()
 })
+
+test('double-clicking a section navigates into it; home comes back; a SQL statement lights its warehouse purple', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'S:compute' }, { in: 'rows' })
+  await clock.advance(100)
+  await ui.post({ press: 'S:compute' }, { in: 'rows' })
+  await clock.settle()
+  let p = await rowsOf(ui)
+  expect(ids(p)).not.toContain('S:catalog')
+  expect(ids(p)).toContain('SW:wh1')
+  await $.tool.call({ tool: 'Bash', command: `databricks api post /api/2.0/sql/statements --json '{"warehouse_id": "wh1", "statement": "SELECT 1"}'` } as any)
+  await clock.advance(50)
+  p = await rowsOf(ui)
+  expect(JSON.stringify(p.rows.find((r: any) => r.id === 'SW:wh1'))).toContain('"sh":"purple"')
+  await clock.settle()
+  await ui.press({ key: 'home' })
+  await clock.settle()
+  expect(ids(await rowsOf(ui))).toContain('S:catalog')
+  await ui.unmount()
+})

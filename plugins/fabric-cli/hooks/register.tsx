@@ -5,7 +5,7 @@ import { glyph, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
-import { FAB_TONE, fabCalls, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, posix, targetLabel, tokenize, useDrives } from './parse'
+import { FAB_TONE, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
@@ -280,7 +280,9 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
       }
     }
     for (const id of bright) dim.delete(id)
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}) }
+    const root = rootOf(cur)
+    const away = follow && root !== '' && unique.some(id => id !== root && !ancestors(cur.nodes, id, byId).includes(root))
+    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
   })
   if (generation !== mine) return
   blink = $.clock.after(FLASH_MS, () => {
@@ -293,10 +295,14 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
 
 type Mark = { ids: string[]; tone: string }
 
+function rootOf(ex: Explorer): string {
+  return ex.root && ex.nodes.some(n => n.id === ex.root) ? ex.root : ''
+}
+
 function anchored(cur: Explorer, next: Explorer): Explorer {
   if (follow || cur.scroll === null || next.scroll !== cur.scroll || (next.nodes === cur.nodes && next.expanded === cur.expanded)) return next
-  const top = visible(cur, SORT)[cur.scroll]?.node.id
-  const at = top ? visible(next, SORT).findIndex(row => row.node.id === top) : -1
+  const top = visible(cur, SORT, rootOf(cur))[cur.scroll]?.node.id
+  const at = top ? visible(next, SORT, rootOf(next)).findIndex(row => row.node.id === top) : -1
   return at < 0 || at === cur.scroll ? next : { ...next, scroll: at }
 }
 
@@ -344,11 +350,29 @@ async function point($: EngineInterface, target: Target | null, opened: 'asked' 
   return moved
 }
 
+async function navigate($: EngineInterface, n: TreeNode): Promise<void> {
+  await patch($, cur => ({ root: n.id, cursor: n.id, scroll: null, expanded: [...new Set([...cur.expanded, n.id, ...ancestors(cur.nodes, n.id)])] }))
+  if (await expandFabric($, n)) await expandOpen($, n.id)
+}
+
+async function goUp($: EngineInterface): Promise<void> {
+  await patch($, cur => {
+    const n = cur.nodes.find(x => x.id === cur.root)
+    return { root: n?.parent ?? '', cursor: n?.id ?? cur.cursor, scroll: null }
+  })
+}
+
+async function goHome($: EngineInterface): Promise<void> {
+  await patchView($, () => ({ root: '', scroll: null }))
+}
+
 async function press($: EngineInterface, n: TreeNode): Promise<void> {
   const now = await $.clock.now()
   const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
   lastPress = { key: isDouble ? '' : n.id, at: now }
-  if (isDouble) await openLocal($, await get($), n)
+  const ex = await get($)
+  if (isDouble && ex.nodes.some(c => c.parent === n.id)) await navigate($, n)
+  else if (isDouble) await openLocal($, ex, n)
   else await select($, n)
 }
 
@@ -433,12 +457,63 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
   }
 }
 
+async function fabRaw($: EngineInterface, args: string[]): Promise<string> {
+  const ctx = fabContext
+  const run = await limited(() =>
+    $.process.run([ctx.bin, ...args], { timeoutMs: 60_000, ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}), ...(ctx.cwd ? { cwd: ctx.cwd } : {}) }),
+  )
+  if (run.exitCode !== 0 || run.isStdoutTruncated) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || `fab ${args[0]} failed`)
+  return run.stdout
+}
+
+const domainOf = new Map<string, string>()
+const domainName = new Map<string, string>()
+
+async function loadDomains($: EngineInterface): Promise<void> {
+  const [ws, names] = await Promise.all([fabRaw($, ['api', 'workspaces']).catch(() => ''), fabRaw($, ['ls', '.domains', '-l', '--output_format', 'json']).catch(() => '')])
+  try {
+    const body = JSON.parse(ws.slice(Math.max(0, ws.indexOf('{')))) as { text?: { value?: { id?: string; domainId?: string }[] } }
+    domainOf.clear()
+    for (const w of body.text?.value ?? []) if (w.id && w.domainId) domainOf.set(w.id.toLowerCase(), w.domainId.toLowerCase())
+  } catch {
+    domainOf.clear()
+  }
+  try {
+    const list = JSON.parse(names.slice(Math.max(0, names.indexOf('{')))) as { result?: { data?: { name?: string; id?: string }[] } }
+    for (const d of list.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
+  } catch {
+    return
+  }
+}
+
+function grouped(nodes: TreeNode[], on: boolean): TreeNode[] {
+  const flat = nodes.filter(n => n.kind !== 'domain').map(n => (n.kind === 'workspace' && n.parent !== '' ? { ...n, parent: '' } : n))
+  if (!on || domainOf.size === 0) return flat
+  const keyOf = (n: TreeNode) => domainOf.get(n.sig.toLowerCase()) ?? 'none'
+  const counts = new Map<string, number>()
+  for (const n of flat) if (n.kind === 'workspace') counts.set(keyOf(n), (counts.get(keyOf(n)) ?? 0) + 1)
+  if (![...counts.keys()].some(k => k !== 'none')) return flat
+  const label = (k: string) => (k === 'none' ? 'No domain' : (domainName.get(k) ?? `Domain ${k.slice(0, 8)}`))
+  const order = [...counts.keys()].sort((a, b) => (a === 'none' ? 1 : b === 'none' ? -1 : label(a).localeCompare(label(b))))
+  const domains = order.map(k => {
+    const count = counts.get(k) ?? 0
+    return { id: `D:${k}`, parent: '', kind: 'domain', name: label(k), path: '', hidden: false, sig: k, note: `${count} workspace${count === 1 ? '' : 's'}` }
+  })
+  return [...domains, ...flat.map(n => (n.kind === 'workspace' ? { ...n, parent: `D:${keyOf(n)}` } : n))]
+}
+
+async function toggleDomains($: EngineInterface): Promise<void> {
+  const on = (await get($)).byDomain === false
+  if (on && domainOf.size === 0) await loadDomains($)
+  await patch($, cur => ({ byDomain: on, nodes: grouped(cur.nodes, on), root: cur.root.startsWith('D:') ? '' : cur.root }))
+}
+
 async function relistRoot($: EngineInterface): Promise<void> {
   const target = (await get($)).target
   if (!target) return
   try {
     const kids = parseWorkspaces(await fabLs($))
-    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: merge(cur.nodes, '', kids) } : {}))
+    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: grouped(merge(grouped(cur.nodes, false), '', kids), cur.byDomain !== false) } : {}))
   } catch (err) {
     statusOwner = ''
     await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
@@ -451,7 +526,9 @@ async function doRefresh($: EngineInterface): Promise<void> {
   await patchView($, () => ({ status: 'loading' }))
   treeGen++
   try {
-    const nodes = parseWorkspaces(await fabLs($))
+    const byDomain = (await get($)).byDomain !== false
+    const [listing] = await Promise.all([fabLs($), byDomain ? loadDomains($) : Promise.resolve()])
+    const nodes = grouped(parseWorkspaces(listing), byDomain)
     await patch($, cur => (sameTarget(cur.target, target) ? { nodes, expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
     await expandOpen($)
   } catch (err) {
@@ -569,7 +646,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
     return { expanded: [...open], cursor: n.id, selected: n.path ? n.id : cur.selected }
   })
   if (!isLeaf && (await expandFabric($, n))) await expandOpen($, n.id)
-  const detail = [`${n.kind} ${n.name}`, `fab path: ${n.path}`]
+  const detail = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
   const model = modelOf(n)
   if (model) detail.push(`model explorer: /model-explorer "${model.server}" "${model.database}"`)
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
@@ -650,6 +727,51 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
   for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
 }
 
+function byGuid(guids: string[], nodes: TreeNode[]): string[] {
+  if (guids.length === 0) return []
+  const want = new Set(guids)
+  return nodes.filter(n => (n.sig && want.has(n.sig.toLowerCase())) || [...want].some(g => (n.url ?? '').toLowerCase().includes(g))).map(n => n.id)
+}
+
+const SQL_KINDS = new Set(['Lakehouse', 'Warehouse', 'SQLEndpoint', 'SQLDatabase', 'MirroredDatabase'])
+
+async function queryNodes($: EngineInterface, queries: { inv: Invocation; q: ReturnType<typeof queryOf> }[], nodes: TreeNode[]): Promise<{ ids: string[]; workspaces: string[]; models: string[] }> {
+  const ids: string[] = []
+  const workspaces: string[] = []
+  const models: string[] = []
+  for (const { inv, q } of queries) {
+    if (!q) continue
+    let workspace = q.workspace
+    let model = q.model
+    if (q.report) {
+      try {
+        const base = posix(q.report).startsWith('/') ? posix(q.report) : `${posix(inv.cwd).replace(/\/+$/, '')}/${posix(q.report)}`
+        const found = modelFromConnection(String(await $.fs.read(`${base.replace(/\/+$/, '')}/definition.pbir`)))
+        if (found) ({ workspace, model } = found)
+      } catch {
+        continue
+      }
+    }
+    if (workspace && model) {
+      workspaces.push(workspace)
+      const path = `${workspace}.workspace/${model}.semanticmodel`.toLowerCase()
+      models.push(path)
+      const n = nodes.find(x => x.path.toLowerCase() === path)
+      if (n) ids.push(n.id)
+    }
+    if (q.database) ids.push(...nodes.filter(n => SQL_KINDS.has(n.kind) && n.name.toLowerCase() === q.database.toLowerCase()).map(n => n.id))
+  }
+  return { ids: [...new Set(ids)], workspaces: [...new Set(workspaces)], models }
+}
+
+async function afterQueries($: EngineInterface, asked: { ids: string[]; workspaces: string[]; models: string[] }): Promise<void> {
+  if (closed || noDock) return
+  await pool(asked.workspaces, w => reveal($, w))
+  const fresh = await get($)
+  const ids = [...new Set([...asked.ids, ...fresh.nodes.filter(n => asked.models.includes(n.path.toLowerCase())).map(n => n.id)])]
+  await flash($, ids, [], FAB_TONE.read)
+}
+
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
@@ -678,12 +800,21 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const command = e.tool === 'Bash' ? e.command : ''
-    if (!/\bfab\b/.test(command)) return next(e)
-    const calls = fabCalls(invocations(command, await cwdOf($)).filter(i => i.tool === 'fab'))
-    if (calls.length === 0) return next(e)
+    if (!/\b(fab|te|pbir|sqlcmd)\b/.test(command)) return next(e)
+    const found = invocations(command, await cwdOf($), {}, ['fab', 'te', 'pbir', 'sqlcmd'])
+    const calls = fabCalls(found.filter(i => i.tool === 'fab'))
+    const queries = found.filter(i => i.tool !== 'fab').flatMap(i => {
+      const q = queryOf(i)
+      return q ? [{ inv: i, q }] : []
+    })
+    if (calls.length === 0 && queries.length === 0) return next(e)
     if (closed || noDock) return next(e)
     const ex = await get($)
-    const marks: Mark[] = calls.map(inv => ({ ids: [HEADER, ...fabWorkspaces(inv).map(w => wsId(ex.nodes, w)), ...fabTouched(inv, ex.nodes)], tone: FAB_TONE[fabKind(inv)] }))
+    const asked = await queryNodes($, queries, ex.nodes)
+    const marks: Mark[] = [
+      ...calls.map(inv => ({ ids: [HEADER, ...fabWorkspaces(inv).map(w => wsId(ex.nodes, w)), ...fabTouched(inv, ex.nodes), ...byGuid(fabGuids(inv), ex.nodes)], tone: FAB_TONE[fabKind(inv)] })),
+      ...(queries.length ? [{ ids: [HEADER, ...asked.ids], tone: FAB_TONE.read }] : []),
+    ]
     await markBusy($, marks)
     let result: Awaited<ReturnType<typeof next>>
     try {
@@ -697,7 +828,8 @@ export const register: Register = (on, options) => {
     const settle = async () => {
       await clearBusy($, marks)
       if (result.deny || closed || noDock) return
-      await afterFab($, calls, stale, !result.isError)
+      if (calls.length) await afterFab($, calls, stale, !result.isError)
+      if (queries.length && !result.isError) await afterQueries($, asked)
     }
     if (task) waiting.set(task, settle)
     else void settle().catch(() => undefined)
@@ -735,7 +867,7 @@ export const register: Register = (on, options) => {
       return {}
     }
     if (typeof data.key !== 'string') return {}
-    const rows = visible(ex, SORT)
+    const rows = visible(ex, SORT, rootOf(ex))
     const at = rows.findIndex(r => r.node.id === ex.cursor)
     const cur = rows[at]
     const move = (d: number) => {
@@ -798,7 +930,7 @@ export const register: Register = (on, options) => {
     const brightSet = new Set(ex.flashOn ? ex.flash : [])
     const dimSet = new Set(ex.flashOn ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
-    const rows = visible(ex, SORT)
+    const rows = visible(ex, SORT, rootOf(ex))
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
     const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
@@ -853,11 +985,13 @@ export const register: Register = (on, options) => {
         ? { pos: max ? Math.round((from / max) * (specs.length - barSize)) : 0, size: barSize, thumb: '#5b9bd5', track: '#4a4a56' }
         : undefined
     const icon = (nerd: string, fallback: string) => (tier === 'plain' ? fallback : nerd)
+    const rootNode = ex.nodes.find(n => n.id === rootOf(ex))
+    const rootName = rootNode ? rootNode.name : ''
     const head: RowSpec = {
       id: '',
       left: clean([
         { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
-        { t: ex.target ? targetLabel(ex.target) : TITLE, b: true },
+        { t: rootName || (ex.target ? targetLabel(ex.target) : TITLE), b: true },
         ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
         ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
       ]),
@@ -867,10 +1001,13 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
         <Box flexDirection="row">
+          {domainOf.size > 0 && <Button key="domains" plain dimColor={ex.byDomain === false} label={`${icon('\u{f0ac}', '◇')} `} onPress={() => void toggleDomains($)} />}
           <Box flexGrow={1} flexShrink={1}>
             <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
           </Box>
           <Box flexDirection="row" gap={2}>
+            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => void goUp($)} />}
+            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => void goHome($)} />}
             <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => void refresh($)} />
             <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patchView($, () => ({ expanded: [] }))} />
             {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patchView($, () => ({ selected: '', detail: [] }))} />}
@@ -893,7 +1030,7 @@ export const register: Register = (on, options) => {
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patchView($, () => ({ query: '' }))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#6b7280', hoverBg: '#79808e', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#353a45', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (

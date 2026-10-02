@@ -27,6 +27,8 @@ export type Explorer = {
   busy: Record<string, { tone: string; n: number; at: number }>
   flashDim: string[]
   scroll: number | null
+  root: string
+  byDomain?: boolean
 }
 
 declare module 'claude-code' {

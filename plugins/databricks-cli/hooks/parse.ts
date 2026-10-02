@@ -1,4 +1,4 @@
-export type Invocation = { tool: 'databricks'; bin: string; args: string[]; cwd: string; env: Record<string, string> }
+export type Invocation = { tool: string; bin: string; args: string[]; cwd: string; env: Record<string, string> }
 
 const SEPARATORS = new Set(['&&', '||', ';', '|', '&', '\n', '(', ')', '`'])
 const PREFIXES = new Set(['do', 'then', 'else', 'elif', 'if', '!', 'time', '{', 'env', 'command', 'builtin', 'exec', 'nohup', 'sudo', 'nice', 'xargs', 'uvx', 'pipx', 'timeout', 'while', 'until'])
@@ -248,7 +248,7 @@ function skipFlags(toks: string[], j: number, word: string): number {
   return j
 }
 
-export function invocations(command: string, sessionCwd: string, base: Record<string, string> = {}): Invocation[] {
+export function invocations(command: string, sessionCwd: string, base: Record<string, string> = {}, tools: readonly string[] = ['databricks']): Invocation[] {
   const text = heredocless(command)
   const toks = tokenize(text)
   const found: Invocation[] = []
@@ -310,7 +310,7 @@ export function invocations(command: string, sessionCwd: string, base: Record<st
       cwd = join(cwd, dir)
       continue
     }
-    if (head !== 'databricks') continue
+    if (!head || !tools.includes(head)) continue
     const args: string[] = []
     let k = j + 1
     while (k < toks.length && !SEPARATORS.has(toks[k] ?? '')) {
@@ -327,7 +327,7 @@ export function invocations(command: string, sessionCwd: string, base: Record<st
   const keyOf = (inv: Invocation) => `${inv.args.join('\0')}\0${JSON.stringify(inv.env)}`
   const seen = new Set(found.map(keyOf))
   for (const body of substitutions(text)) {
-    for (const inv of invocations(body, cwd, exported)) {
+    for (const inv of invocations(body, cwd, exported, tools)) {
       const key = keyOf(inv)
       if (seen.has(key) || found.length >= MAX_CALLS) continue
       seen.add(key)
@@ -395,7 +395,7 @@ export function dbKind(inv: Invocation): DbKind | null {
   }
   if (group === 'bundle') return verb === 'deploy' ? 'upload' : READ_VERBS.has(verb) || verb === 'generate' ? 'read' : 'modify'
   if (group === 'sync') return 'upload'
-  if (group === 'api') return verb.toLowerCase() === 'get' ? 'read' : 'modify'
+  if (group === 'api') return verb.toLowerCase() === 'get' || /\/sql\/statements/.test(pos[2] ?? '') ? 'read' : 'modify'
   if (group === 'current-user') return 'read'
   if (verb === 'export' || verb === 'export-run') return 'download'
   if (READ_VERBS.has(verb) || verb.startsWith('list-') || verb.startsWith('get-')) return 'read'
@@ -458,6 +458,13 @@ export function dbTargets(inv: Invocation): string[] {
       if (verb === 'list') out.push('S:jobs')
       else id('J', flag(inv.args, '--job-id') || (/run/.test(verb) && verb !== 'run-now' ? '' : /^\d+$/.test(a0) ? a0 : ''))
       break
+    case 'api': {
+      if (!/\/sql\/statements/.test(a0)) break
+      const body = flag(inv.args, '--json')
+      const wh = body.match(/"warehouse_id"\s*:\s*"([^"]+)"/)?.[1]
+      if (wh) out.push(`SW:${wh}`)
+      break
+    }
     case 'bundle':
       if (verb === 'deploy' || verb === 'destroy') out.push('S:jobs', 'S:pipelines', 'S:dashboards', 'S:apps', 'S:workspace')
       break

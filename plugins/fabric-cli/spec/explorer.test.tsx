@@ -21,6 +21,8 @@ let onTool: ((e: any) => Promise<void>) | null = null
 let toolResult: any = null
 let copyResult: any = { isCopied: true }
 const failing = new Set<string>()
+let domainsOn = false
+const DOM = '11111111-2222-4333-8444-555555555555'
 const toasts: string[] = []
 
 function world(on: any, env: Record<string, string>, ran: Ran) {
@@ -61,6 +63,10 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (argv[0] === 'uname') return ok(env.OS ? '' : env.HOME?.startsWith('/Users') ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
+    if (argv[0] === 'fab' && argv[1] === 'api' && argv[2] === 'workspaces') {
+      return ok(domainsOn ? JSON.stringify({ status_code: 200, text: { value: WORKSPACES.map((w, i) => ({ id: w.id, displayName: w.name, ...(i < 3 ? { domainId: DOM } : {}) })) } }) : '')
+    }
+    if (argv[0] === 'fab' && argv[1] === 'ls' && argv[2] === '.domains') return ok(domainsOn ? JSON.stringify({ result: { data: [{ name: 'Sales.Domain', id: DOM }] } }) : '')
     if (argv[0] === 'fab' && argv[1] === 'ls') {
       const path = argv[2] && !argv[2].startsWith('-') ? argv[2].replace(/^\/+/, '') : ''
       if (failing.has(path)) return { value: { exitCode: 1, stdout: '', stderr: 'Forbidden', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -567,5 +573,54 @@ test('follow off: Claude reads far away or inside a folder above the view never 
   await $.ui.scroll({ component: 'Pane', requestId: PANE, by: 10 })
   await clock.settle()
   expect((await rowsOf(ui)).rows[0]?.id).not.toBe(top)
+  await ui.unmount()
+})
+
+test('workspaces group by domain with counts, and the top-left icon turns grouping off', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const ui = await open($, clock, 'terminal')
+  let p = await rowsOf(ui)
+  const ids = p.rows.map((r: any) => r.id)
+  expect(ids).toContain(`D:${DOM}`)
+  expect(ids).toContain('D:none')
+  expect(JSON.stringify(p.rows.find((r: any) => r.id === `D:${DOM}`))).toContain('3 workspaces')
+  expect(ids).not.toContain('W:WS00')
+  await ui.press({ key: 'domains' })
+  await clock.settle()
+  p = await rowsOf(ui)
+  expect(p.rows.map((r: any) => r.id)).toContain('W:WS00')
+  domainsOn = false
+  await ui.unmount()
+})
+
+test('double-clicking a workspace navigates into it; up and home come back', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.advance(100)
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  let p = await rowsOf(ui)
+  expect(p.rows[0]?.id).toBe('W:WS00/Sales.SemanticModel')
+  expect(p.rows.map((r: any) => r.id)).not.toContain('W:WS01')
+  expect(JSON.stringify(await ui.drawn())).toContain('WS00')
+  await ui.press({ key: 'home' })
+  await clock.settle()
+  p = await rowsOf(ui)
+  expect(p.rows.map((r: any) => r.id)).toContain('W:WS01')
+  await ui.unmount()
+})
+
+test('a te query against a Fabric model lights the semantic model purple', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await $.tool.call({ tool: 'Bash', command: 'te query -s "powerbi://api.powerbi.com/v1.0/myorg/WS00" -d Sales "EVALUATE ROW(1)"' } as any)
+  await clock.advance(50)
+  const p = await rowsOf(ui)
+  expect(JSON.stringify(p.rows.find((r: any) => r.id === 'W:WS00/Sales.SemanticModel'))).toContain('"sh":"purple"')
   await ui.unmount()
 })

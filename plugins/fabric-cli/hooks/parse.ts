@@ -1,6 +1,6 @@
 import type { Target } from '../types'
 
-export type Invocation = { tool: 'fab'; bin: string; args: string[]; cwd: string; env: Record<string, string> }
+export type Invocation = { tool: string; bin: string; args: string[]; cwd: string; env: Record<string, string> }
 
 const SEPARATORS = new Set(['&&', '||', ';', '|', '&', '\n', '(', ')', '`'])
 const PREFIXES = new Set(['do', 'then', 'else', 'elif', 'if', '!', 'time', '{', 'env', 'command', 'builtin', 'exec', 'nohup', 'sudo', 'nice', 'xargs', 'uvx', 'pipx', 'timeout', 'while', 'until'])
@@ -250,7 +250,7 @@ function skipFlags(toks: string[], j: number, word: string): number {
   return j
 }
 
-export function invocations(command: string, sessionCwd: string, base: Record<string, string> = {}): Invocation[] {
+export function invocations(command: string, sessionCwd: string, base: Record<string, string> = {}, tools: readonly string[] = ['fab']): Invocation[] {
   const text = heredocless(command)
   const toks = tokenize(text)
   const found: Invocation[] = []
@@ -312,7 +312,7 @@ export function invocations(command: string, sessionCwd: string, base: Record<st
       cwd = join(cwd, dir)
       continue
     }
-    if (head !== 'fab') continue
+    if (!head || !tools.includes(head)) continue
     const args: string[] = []
     let k = j + 1
     while (k < toks.length && !SEPARATORS.has(toks[k] ?? '')) {
@@ -329,7 +329,7 @@ export function invocations(command: string, sessionCwd: string, base: Record<st
   const keyOf = (inv: Invocation) => `${inv.args.join('\0')}\0${JSON.stringify(inv.env)}`
   const seen = new Set(found.map(keyOf))
   for (const body of substitutions(text)) {
-    for (const inv of invocations(body, cwd, exported)) {
+    for (const inv of invocations(body, cwd, exported, tools)) {
       const key = keyOf(inv)
       if (seen.has(key) || found.length >= MAX_CALLS) continue
       seen.add(key)
@@ -395,6 +395,7 @@ export function fabKind(inv: Invocation): FabKind {
     const at = rest.findIndex(a => a === '-X' || a === '--method')
     const method = (eq ?? (at >= 0 ? rest[at + 1] : undefined) ?? 'get').toLowerCase()
     const url = pos[0] ?? ''
+    if (/executeQueries|executeDaxQueries/i.test(url)) return 'read'
     if (/getdefinition/i.test(url)) return 'download'
     if (/updatedefinition/i.test(url)) return 'upload'
     return method === 'get' ? 'read' : 'modify'
@@ -434,4 +435,47 @@ export function fabCalls(calls: Invocation[]): Invocation[] {
 
 function isLocalPath(arg: string): boolean {
   return /^(\.{1,2}\/|~)/.test(arg)
+}
+
+const GUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+
+export function fabGuids(inv: Invocation): string[] {
+  return inv.args[0] === 'api' ? inv.args.slice(1).flatMap(a => a.match(GUID) ?? []).map(g => g.toLowerCase()) : []
+}
+
+function flagOf(args: string[], names: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? ''
+    for (const n of names) {
+      if (a === n) return args[i + 1] ?? ''
+      if (a.startsWith(`${n}=`)) return a.slice(n.length + 1)
+    }
+  }
+  return ''
+}
+
+export type Query = { workspace: string; model: string; database: string; report: string }
+
+export function queryOf(inv: Invocation): Query | null {
+  const none = { workspace: '', model: '', database: '', report: '' }
+  if (inv.tool === 'te' && inv.args[0] === 'query') {
+    const server = flagOf(inv.args, ['-s', '--server'])
+    const ws = server.match(/^powerbi:\/\/[^/]+\/v1\.0\/[^/]+\/(.+)$/i)?.[1]
+    const model = flagOf(inv.args, ['-d', '--database'])
+    return ws && model ? { ...none, workspace: decodeURIComponent(ws), model } : null
+  }
+  if (inv.tool === 'pbir' && inv.args[0] === 'model' && inv.args.some(a => a === '-q' || a === '--query' || a.startsWith('--query='))) {
+    const report = inv.args[1] ?? ''
+    return report && !report.startsWith('-') ? { ...none, report } : null
+  }
+  if (inv.tool === 'sqlcmd') {
+    const database = flagOf(inv.args, ['-d', '--database-name'])
+    return database ? { ...none, database } : null
+  }
+  return null
+}
+
+export function modelFromConnection(text: string): { workspace: string; model: string } | null {
+  const m = text.match(/Data Source=\\?"?powerbi:\/\/[^/]+\/v1\.0\/[^/]+\/([^";\\]+)\\?"?;\s*initial catalog=\\?"?([^";\\]+)/i)
+  return m?.[1] && m[2] ? { workspace: decodeURIComponent(m[1].trim()), model: m[2].trim() } : null
 }

@@ -256,7 +256,9 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
       }
     }
     for (const id of bright) dim.delete(id)
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}) }
+    const root = rootOf(cur)
+    const away = follow && root !== '' && unique.some(id => id !== root && !ancestors(cur.nodes, id, byId).includes(root))
+    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
   })
   if (generation !== mine) return
   blink = $.clock.after(FLASH_MS, () => {
@@ -269,10 +271,14 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
 
 type Mark = { ids: string[]; tone: string }
 
+function rootOf(ex: Explorer): string {
+  return ex.root && ex.nodes.some(n => n.id === ex.root) ? ex.root : ''
+}
+
 function anchored(cur: Explorer, next: Explorer): Explorer {
   if (follow || cur.scroll === null || next.scroll !== cur.scroll || (next.nodes === cur.nodes && next.expanded === cur.expanded)) return next
-  const top = visible(cur, SORT)[cur.scroll]?.node.id
-  const at = top ? visible(next, SORT).findIndex(row => row.node.id === top) : -1
+  const top = visible(cur, SORT, rootOf(cur))[cur.scroll]?.node.id
+  const at = top ? visible(next, SORT, rootOf(next)).findIndex(row => row.node.id === top) : -1
   return at < 0 || at === cur.scroll ? next : { ...next, scroll: at }
 }
 
@@ -322,11 +328,29 @@ async function point($: EngineInterface, target: Target | null, opened: 'asked' 
   return moved
 }
 
+async function navigate($: EngineInterface, n: TreeNode): Promise<void> {
+  await patch($, cur => ({ root: n.id, cursor: n.id, scroll: null, expanded: [...new Set([...cur.expanded, n.id, ...ancestors(cur.nodes, n.id)])] }))
+  if (await expandNode($, n)) await expandOpen($, n.id)
+}
+
+async function goUp($: EngineInterface): Promise<void> {
+  await patch($, cur => {
+    const n = cur.nodes.find(x => x.id === cur.root)
+    return { root: n?.parent ?? '', cursor: n?.id ?? cur.cursor, scroll: null }
+  })
+}
+
+async function goHome($: EngineInterface): Promise<void> {
+  await patchView($, () => ({ root: '', scroll: null }))
+}
+
 async function press($: EngineInterface, n: TreeNode): Promise<void> {
   const now = await $.clock.now()
   const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
   lastPress = { key: isDouble ? '' : n.id, at: now }
-  if (isDouble) await openLocal($, await get($), n)
+  const ex = await get($)
+  if (isDouble && ex.nodes.some(c => c.parent === n.id)) await navigate($, n)
+  else if (isDouble) await openLocal($, ex, n)
   else await select($, n)
 }
 
@@ -682,7 +706,7 @@ export const register: Register = (on, options) => {
       return {}
     }
     if (typeof data.key !== 'string') return {}
-    const rows = visible(ex, SORT)
+    const rows = visible(ex, SORT, rootOf(ex))
     const at = rows.findIndex(r => r.node.id === ex.cursor)
     const cur = rows[at]
     const move = (d: number) => {
@@ -745,7 +769,7 @@ export const register: Register = (on, options) => {
     const brightSet = new Set(ex.flashOn ? ex.flash : [])
     const dimSet = new Set(ex.flashOn ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
-    const rows = visible(ex, SORT)
+    const rows = visible(ex, SORT, rootOf(ex))
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
     const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
@@ -800,11 +824,13 @@ export const register: Register = (on, options) => {
         ? { pos: max ? Math.round((from / max) * (specs.length - barSize)) : 0, size: barSize, thumb: '#5b9bd5', track: '#4a4a56' }
         : undefined
     const icon = (nerd: string, fallback: string) => (tier === 'plain' ? fallback : nerd)
+    const rootNode = ex.nodes.find(n => n.id === rootOf(ex))
+    const rootName = rootNode ? rootNode.name : ''
     const head: RowSpec = {
       id: '',
       left: clean([
         { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
-        { t: label(ex.target), b: true },
+        { t: rootName || (label(ex.target)), b: true },
         ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
         ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
       ]),
@@ -818,6 +844,8 @@ export const register: Register = (on, options) => {
             <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
           </Box>
           <Box flexDirection="row" gap={2}>
+            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => void goUp($)} />}
+            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => void goHome($)} />}
             <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => void refresh($)} />
             <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patchView($, () => ({ expanded: [] }))} />
             {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patchView($, () => ({ selected: '', detail: [] }))} />}
@@ -840,7 +868,7 @@ export const register: Register = (on, options) => {
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patchView($, () => ({ query: '' }))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#6b7280', hoverBg: '#79808e', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#353a45', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
