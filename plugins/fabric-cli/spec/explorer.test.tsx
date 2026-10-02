@@ -549,3 +549,23 @@ test('a lakehouse opens to Files and Tables; a Delta folder becomes a table and 
   for (const k of Object.keys(lake)) if (k.startsWith('WS00.Workspace/LH.Lakehouse')) delete lake[k]
   await ui.unmount()
 })
+
+test('follow off: Claude reads far away or inside a folder above the view never move it; the wheel still does', { timeoutMs: 20_000, options: { follow: 'off' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await $.ui.scroll({ component: 'Pane', requestId: PANE, by: 20 })
+  await clock.settle()
+  const top = (await rowsOf(ui)).rows[0]?.id
+  expect(top).not.toBe('W:WS00')
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS58.Workspace" -q id' } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).toBe(top)
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS00.Workspace/Sales.SemanticModel" -q id' } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).toBe(top)
+  await $.ui.scroll({ component: 'Pane', requestId: PANE, by: 10 })
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).not.toBe(top)
+  await ui.unmount()
+})

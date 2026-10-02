@@ -205,7 +205,7 @@ async function put($: EngineInterface, fn: (ex: Explorer) => Explorer): Promise<
     if (i >= 50) throw new Error('pane state is busy; try again')
     const [view, tree] = await Promise.all([$.state.get(STATE), $.state.get(NODES)])
     const cur: Explorer = { ...empty(), ...view.value, nodes: tree.value ?? [] }
-    const next = fn(cur)
+    const next = anchored(cur, fn(cur))
     if (next.nodes !== cur.nodes) {
       const done = await $.state.set(NODES, next.nodes, { ifVersion: tree.version })
       if (!done.isSet) continue
@@ -292,6 +292,14 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
 }
 
 type Mark = { ids: string[]; tone: string }
+
+function anchored(cur: Explorer, next: Explorer): Explorer {
+  if (follow || cur.scroll === null || next.scroll !== cur.scroll || (next.nodes === cur.nodes && next.expanded === cur.expanded)) return next
+  const top = visible(cur, SORT)[cur.scroll]?.node.id
+  const at = top ? visible(next, SORT).findIndex(row => row.node.id === top) : -1
+  return at < 0 || at === cur.scroll ? next : { ...next, scroll: at }
+}
+
 
 async function markBusy($: EngineInterface, marks: Mark[]): Promise<void> {
   if (marks.every(m => m.ids.length === 0)) return
@@ -527,7 +535,7 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
 async function reveal($: EngineInterface, workspace: string): Promise<void> {
   const n = wsNode((await get($)).nodes, workspace)
   if (!n) return
-  await patchView($, cur => ({ expanded: [...new Set([...cur.expanded, n.id])] }))
+  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, n.id])] }))
   await expandFabric($, n)
 }
 

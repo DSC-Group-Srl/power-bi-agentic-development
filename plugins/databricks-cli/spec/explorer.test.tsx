@@ -364,3 +364,26 @@ test('tables create targets catalog.schema.table, a started cluster refreshes Co
   expect(JSON.stringify(await ui.drawn())).toContain('too much output')
   await ui.unmount()
 })
+
+test('follow off: Claude touching objects far away or in a catalog above never moves the view; the wheel still does', { timeoutMs: 20_000, options: { follow: 'off' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'S:jobs' }, { in: 'rows' })
+  await clock.settle()
+  await $.ui.scroll({ component: 'Pane', requestId: PANE, by: 20 })
+  await clock.settle()
+  const top = (await rowsOf(ui)).rows[0]?.id
+  expect(top).not.toBe('S:workspace')
+  await $.tool.call({ tool: 'Bash', command: 'databricks jobs get 158' } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).toBe(top)
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).toBe(top)
+  await $.ui.scroll({ component: 'Pane', requestId: PANE, by: 10 })
+  await clock.settle()
+  expect((await rowsOf(ui)).rows[0]?.id).not.toBe(top)
+  await ui.unmount()
+})
