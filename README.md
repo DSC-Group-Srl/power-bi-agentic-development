@@ -75,6 +75,7 @@ claude plugin install paginated-reports@power-bi-agentic-development
 claude plugin install custom-visuals@power-bi-agentic-development
 claude plugin install fabric-cli@power-bi-agentic-development
 claude plugin install fabric-admin@power-bi-agentic-development
+claude plugin install databricks-cli@power-bi-agentic-development
 claude plugin install etl@power-bi-agentic-development
 ```
 
@@ -164,6 +165,9 @@ The repo contains skills, agents, and hooks.
 - **Skills** teach agents domain knowledge and workflows. They activate automatically based on task context, or can be invoked manually with `/skill-name`. In Claude Code, skills and commands have coalesced; commands are simply more prescriptive skill workflows.
 - **Agents** are autonomous subprocesses that handle complex, multi-step tasks independently; typically used for review and validation.
 - **Hooks** run automatically after tool use to validate files and catch errors early. They are deterministic; they fire when a specific pattern is matched, not by LLM judgment.
+- **Mods** add a pane to Claude Code itself. The Fabric and Databricks explorers browse your tenant or workspace as a tree beside the conversation, shimmer what Claude reads, downloads, uploads or changes through the CLI, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
+
+Mods need Claude Code 2.1.287 or newer. The panes live in the sidebar on the right, which needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide; in the default layout or tmux they stay hidden and their command tells you how to switch. Icons use the brand symbol fonts when installed, then a Nerd Font, then plain Unicode; set the `glyphs` option on the plugin to force one.
 
 Hook checks can be individually toggled via config files. Set any check to `false` to disable it:
 - `plugins/pbip/hooks/config.yaml` -- PBIR, TMDL, and report binding validation
@@ -293,6 +297,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 |------|------|-------------|
 | Skill | [`fabric-cli`](plugins/fabric-cli/skills/fabric-cli/) | Fabric CLI (fab) for any remote operation in Power BI or Fabric (works fully on Pro, PPU; Fabric not required) |
 | Command | [`/migrating-fabric-trial-capacities`](plugins/fabric-cli/commands/migrating-fabric-trial-capacities.md) | Migrate workspaces from trial to production capacity |
+| Mod | [`/fabric-explorer`](plugins/fabric-cli/hooks/) | Fabric explorer pane: workspaces and items as a tree that follows `fab`, with live highlights, scrolling, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal |
 
 </details>
 
@@ -302,6 +307,15 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 | Type | Name | Description |
 |------|------|-------------|
 | Skill | [`audit-tenant-settings`](plugins/fabric-admin/skills/audit-tenant-settings/) | Audit Fabric and Power BI tenant settings, delegated overrides, and Entra security group membership |
+
+</details>
+
+<details>
+<summary><strong>databricks-cli</strong> &ensp; Databricks explorer pane that follows the databricks CLI</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Mod | [`/databricks-explorer`](plugins/databricks-cli/hooks/) | Databricks explorer pane: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards as a tree that follows `databricks`, with live highlights, profile switching (`-p` or `DATABRICKS_CONFIG_PROFILE`), copy of CLI arguments, and open in Databricks. Optional arg: a profile |
 
 </details>
 
