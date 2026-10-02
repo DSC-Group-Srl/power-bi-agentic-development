@@ -297,7 +297,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 |------|------|-------------|
 | Skill | [`fabric-cli`](plugins/fabric-cli/skills/fabric-cli/) | Fabric CLI (fab) for any remote operation in Power BI or Fabric (works fully on Pro, PPU; Fabric not required) |
 | Command | [`/migrating-fabric-trial-capacities`](plugins/fabric-cli/commands/migrating-fabric-trial-capacities.md) | Migrate workspaces from trial to production capacity |
-| Mod | [`/fabric-pane`](plugins/fabric-cli/hooks/) | Fabric pane: workspaces and items as a tree that follows `fab`, with live highlights, scrolling, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal |
+| Mod | [`/fabric-pane`](plugins/fabric-cli/hooks/) | Fabric pane: workspaces and items as a tree that follows `fab`, with live highlights, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal |
 
 </details>
 
