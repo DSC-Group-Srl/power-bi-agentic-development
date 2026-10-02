@@ -4,7 +4,7 @@ import type { Explorer, Target, TreeNode } from '../types'
 import { glyph, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
-import { modelOf, parseChildren, parseWorkspaces, PLACEHOLDER } from './fabric'
+import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
 import { FAB_TONE, fabCalls, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, posix, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 
@@ -44,6 +44,7 @@ let lastPress = { key: '', at: 0 }
 const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
+let follow = true
 let blink: Timer | null = null
 let generation = 0
 let closed = false
@@ -279,7 +280,7 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
       }
     }
     for (const id of bright) dim.delete(id)
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], scroll: null }
+    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}) }
   })
   if (generation !== mine) return
   blink = $.clock.after(FLASH_MS, () => {
@@ -359,6 +360,10 @@ function contextOf(inv: { bin: string; env: Record<string, string>; cwd: string 
 
 function identityOf(env: Record<string, string>): string {
   return [env.FAB_TENANT_ID, env.FAB_SPN_CLIENT_ID].filter(Boolean).join('|')
+}
+
+function listing(stdout: string, n: TreeNode, nodes: TreeNode[]): { kids: TreeNode[]; become: string } {
+  return inOneLake(n) ? parseOneLake(stdout, n) : { kids: parseChildren(stdout, n, nodes), become: '' }
 }
 
 async function fabLs($: EngineInterface, path?: string): Promise<string> {
@@ -468,7 +473,7 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
     if (!n || !isLoaded(ex.nodes, n.id)) return true
     const gen = treeGen
     try {
-      const kids = parseChildren(await fabLs($, n.path), n, ex.nodes)
+      const { kids } = listing(await fabLs($, n.path), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       await patch($, cur => (gen === treeGen && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
@@ -497,12 +502,13 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
     if (!ex.nodes.some(c => c.parent === n.id && c.kind === PLACEHOLDER)) return true
     const gen = treeGen
     try {
-      const kids = parseChildren(await fabLs($, n.path), n, ex.nodes)
+      const { kids, become } = listing(await fabLs($, n.path), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
+      const fill = kids.length ? kids : become === 'lakehouse table' ? [] : [emptyMark(n.id)]
       await patch($, cur =>
         gen === treeGen && cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)
-          ? { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...(owned ? { status: '' } : {}) }
+          ? { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? fill : x.id === n.id && become ? [{ ...x, kind: become, note: become === 'lakehouse table' ? 'Delta table' : x.note }] : [x])), ...(owned ? { status: '' } : {}) }
           : owned
             ? { status: '' }
             : {},
@@ -638,6 +644,7 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
 
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
+  follow = options?.follow !== 'off'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
@@ -786,14 +793,14 @@ export const register: Register = (on, options) => {
     const rows = visible(ex, SORT)
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
-    const focusId = ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
+    const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
-    const lit = ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     let from = Math.max(0, Math.min(fits ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
     const cap = Math.max(1, Math.floor(room / 3))
-    let pinned = ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
+    let pinned = follow && ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
     if (pinned.length) {
       const rest = Math.max(3, room - pinned.length)
       from = Math.max(0, Math.min(at - Math.floor(rest / 2), rows.length - rest))

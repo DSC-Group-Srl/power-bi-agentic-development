@@ -19,7 +19,7 @@ const ITEM_ROUTE: Record<string, string> = {
   Environment: 'sparkenvironments',
 }
 
-type Entry = { name: string; id: string }
+type Entry = { name: string; id: string; type?: string }
 
 function node(id: string, parent: string, kind: string, name: string, path: string, url = ''): TreeNode {
   return { id, parent, kind, name, path, hidden: false, sig: '', note: '', url }
@@ -80,9 +80,36 @@ export function parseChildren(stdout: string, parent: TreeNode, nodes: TreeNode[
     const id = `${parent.id}/${e.name}`
     const path = `${parent.path}/${e.name}`
     if (type === 'Folder') out.push({ ...node(id, parent.id, 'fabric folder', name, path, workspaceUrl(wsId)), sig: wsId }, stub(id))
+    else if (ONELAKE_ITEMS.has(type)) out.push({ ...node(id, parent.id, type, name, path, itemUrl(wsId, type, e.id ?? '')), note: typeLabel(type) }, stub(id))
     else out.push({ ...node(id, parent.id, type, name, path, itemUrl(wsId, type, e.id ?? '')), note: typeLabel(type) })
   }
   return out
+}
+
+const ONELAKE_ITEMS = new Set(['Lakehouse'])
+const ONELAKE_DIRS = new Set(['lakehouse folder', 'onelake folder', 'onelake dir', 'onelake schema'])
+
+export function inOneLake(n: TreeNode): boolean {
+  return ONELAKE_ITEMS.has(n.kind) || ONELAKE_DIRS.has(n.kind)
+}
+
+export function parseOneLake(stdout: string, parent: TreeNode): { kids: TreeNode[]; become: string } {
+  const list = entries(stdout)
+  const tables = /\.Lakehouse\/Tables(\/|$)/i.test(parent.path)
+  if (tables && parent.kind === 'onelake dir' && list.some(e => e.name === '_delta_log')) return { kids: [], become: 'lakehouse table' }
+  const schema = tables && parent.kind === 'onelake dir'
+  const out: TreeNode[] = []
+  for (const e of list) {
+    const name = e.type === 'Shortcut' ? e.name.replace(/\.Shortcut$/, '') : e.name
+    const id = `${parent.id}/${name}`
+    const path = `${parent.path}/${name}`
+    if (ONELAKE_ITEMS.has(parent.kind)) out.push(node(id, parent.id, 'lakehouse folder', name, path), stub(id))
+    else if (e.type === 'Directory' && schema) out.push({ ...node(id, parent.id, 'lakehouse table', name, path), note: 'Delta table' })
+    else if (e.type === 'Directory' && tables) out.push(node(id, parent.id, 'onelake dir', name, path), stub(id))
+    else if (e.type === 'Directory') out.push(node(id, parent.id, 'onelake folder', name, path), stub(id))
+    else out.push({ ...node(id, parent.id, e.type === 'Shortcut' ? 'onelake shortcut' : 'onelake file', name, path), note: e.type === 'Shortcut' ? 'Shortcut' : '' })
+  }
+  return { kids: out, become: schema ? 'onelake schema' : '' }
 }
 
 export function workspaceOf(path: string): string | null {

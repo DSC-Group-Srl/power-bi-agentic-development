@@ -42,6 +42,7 @@ let lastPress = { key: '', at: 0 }
 const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
+let follow = true
 let blink: Timer | null = null
 let generation = 0
 let closed = false
@@ -255,7 +256,7 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
       }
     }
     for (const id of bright) dim.delete(id)
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], scroll: null }
+    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}) }
   })
   if (generation !== mine) return
   blink = $.clock.after(FLASH_MS, () => {
@@ -586,6 +587,7 @@ function changesMembers(args: string[]): boolean {
 
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
+  follow = options?.follow !== 'off'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
@@ -738,14 +740,14 @@ export const register: Register = (on, options) => {
     const rows = visible(ex, SORT)
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
-    const focusId = ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
+    const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
-    const lit = ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     let from = Math.max(0, Math.min(fits ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
     const cap = Math.max(1, Math.floor(room / 3))
-    let pinned = ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
+    let pinned = follow && ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
     if (pinned.length) {
       const rest = Math.max(3, room - pinned.length)
       from = Math.max(0, Math.min(at - Math.floor(rest / 2), rows.length - rest))

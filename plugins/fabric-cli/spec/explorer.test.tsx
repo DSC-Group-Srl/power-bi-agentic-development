@@ -518,3 +518,34 @@ test('rm -f on a whole workspace re-lists the tenant, and a refused clipboard wr
   expect(toasts.at(-1)).toBe('Could not copy')
   await ui.unmount()
 })
+
+test('a lakehouse opens to Files and Tables; a Delta folder becomes a table and a schema lists its tables', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const lake = ITEMS as Record<string, { name: string; id?: string; type?: string }[]>
+  lake['WS00.Workspace/LH.Lakehouse'] = [{ name: 'Files' }, { name: 'Tables' }]
+  lake['WS00.Workspace/LH.Lakehouse/Tables'] = [{ name: 'orders', type: 'Directory' }, { name: 'dbo', type: 'Directory' }]
+  lake['WS00.Workspace/LH.Lakehouse/Tables/orders'] = [{ name: '_delta_log', type: 'Directory' }, { name: 'part-0.parquet', type: 'File' }]
+  lake['WS00.Workspace/LH.Lakehouse/Tables/dbo'] = [{ name: 'customers', type: 'Directory' }]
+  const ui = await open($, clock, 'terminal')
+  const press = async (id: string) => {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  await press('W:WS00')
+  await press('W:WS00/LH.Lakehouse')
+  let p = await rowsOf(ui)
+  expect(p.rows.some((r: any) => r.id === 'W:WS00/LH.Lakehouse/Tables')).toBe(true)
+  expect(p.rows.some((r: any) => r.id === 'W:WS00/LH.Lakehouse/Files')).toBe(true)
+  await press('W:WS00/LH.Lakehouse/Tables')
+  await press('W:WS00/LH.Lakehouse/Tables/orders')
+  await press('W:WS00/LH.Lakehouse/Tables/dbo')
+  p = await rowsOf(ui)
+  const ids = p.rows.map((r: any) => r.id)
+  expect(ids).toContain('W:WS00/LH.Lakehouse/Tables/dbo/customers')
+  expect(ids.some((id: string) => id.startsWith('W:WS00/LH.Lakehouse/Tables/orders/'))).toBe(false)
+  expect(JSON.stringify(p.rows.find((r: any) => r.id === 'W:WS00/LH.Lakehouse/Tables/orders'))).toContain('Delta table')
+  for (const k of Object.keys(lake)) if (k.startsWith('WS00.Workspace/LH.Lakehouse')) delete lake[k]
+  await ui.unmount()
+})
