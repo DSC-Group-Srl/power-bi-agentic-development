@@ -1,4 +1,4 @@
-export type Invocation = { tool: 'databricks'; args: string[]; cwd: string; env: Record<string, string> }
+export type Invocation = { tool: 'databricks'; bin: string; args: string[]; cwd: string; env: Record<string, string> }
 
 const SEPARATORS = new Set(['&&', '||', ';', '|', '&', '\n', '(', ')', '`'])
 const PREFIXES = new Set(['do', 'then', 'else', 'elif', 'if', '!', 'time', '{', 'env', 'command', 'builtin', 'exec', 'nohup', 'sudo', 'nice', 'xargs', 'uvx', 'pipx', 'timeout', 'while', 'until'])
@@ -119,18 +119,64 @@ export function join(base: string, raw: string): string {
   return parts.join('/') || '/'
 }
 
+function operators(line: string): { word: string; tabs: boolean; expand: boolean }[] {
+  const found: { word: string; tabs: boolean; expand: boolean }[] = []
+  const outer: boolean[] = []
+  let single = false
+  let double = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (single) {
+      if (ch === "'") single = false
+      continue
+    }
+    if (ch === '\\') {
+      i++
+      continue
+    }
+    if (ch === '$' && line[i + 1] === '(') {
+      outer.push(double)
+      double = false
+      i++
+      continue
+    }
+    if (ch === ')' && outer.length && !double) {
+      double = outer.pop() ?? false
+      continue
+    }
+    if (ch === '"') {
+      double = !double
+      continue
+    }
+    if (double) continue
+    if (ch === "'") {
+      single = true
+      continue
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1] ?? ''))) break
+    if (ch === '<' && line[i + 1] === '<' && line[i + 2] !== '<') {
+      const m = line.slice(i).match(/^<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/)
+      if (m) {
+        found.push({ word: m[3] ?? '', tabs: m[1] === '-', expand: !m[2] })
+        i += m[0].length - 1
+      }
+    }
+  }
+  return found
+}
+
 function heredocless(command: string): string {
-  const lines = command.split('\n')
   const out: string[] = []
-  const pending: { word: string; tabs: boolean }[] = []
-  for (const line of lines) {
+  const pending: { word: string; tabs: boolean; expand: boolean }[] = []
+  for (const line of command.split('\n')) {
     const head = pending[0]
     if (head) {
       if ((head.tabs ? line.replace(/^\t+/, '') : line) === head.word) pending.shift()
+      else if (head.expand) out.push(...substitutions(line))
       continue
     }
     out.push(line)
-    for (const m of line.matchAll(/<<(-?)\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g)) pending.push({ word: m[3] ?? '', tabs: m[1] === '-' })
+    pending.push(...operators(line))
   }
   return out.join('\n')
 }
@@ -202,12 +248,12 @@ function skipFlags(toks: string[], j: number, word: string): number {
   return j
 }
 
-export function invocations(command: string, sessionCwd: string): Invocation[] {
+export function invocations(command: string, sessionCwd: string, base: Record<string, string> = {}): Invocation[] {
   const text = heredocless(command)
   const toks = tokenize(text)
   const found: Invocation[] = []
   const loops: { name: string; words: string[] }[] = []
-  const exported: Record<string, string> = {}
+  const exported: Record<string, string> = { ...base }
   let cwd = sessionCwd
   let start = true
   for (let i = 0; i < toks.length && found.length < MAX_CALLS; i++) {
@@ -275,13 +321,14 @@ export function invocations(command: string, sessionCwd: string): Invocation[] {
       }
       args.push(tok)
     }
-    for (const each of expand(args, loops)) if (found.length < MAX_CALLS) found.push({ tool: head, args: each, cwd, env: { ...exported, ...env } })
+    for (const each of expand(args, loops)) if (found.length < MAX_CALLS) found.push({ tool: head, bin: toks[j] ?? head, args: each, cwd, env: { ...exported, ...env } })
     i = k - 1
   }
-  const seen = new Set(found.map(f => f.args.join('\0')))
+  const keyOf = (inv: Invocation) => `${inv.args.join('\0')}\0${JSON.stringify(inv.env)}`
+  const seen = new Set(found.map(keyOf))
   for (const body of substitutions(text)) {
-    for (const inv of invocations(body, cwd)) {
-      const key = inv.args.join('\0')
+    for (const inv of invocations(body, cwd, exported)) {
+      const key = keyOf(inv)
       if (seen.has(key) || found.length >= MAX_CALLS) continue
       seen.add(key)
       found.push(inv)
@@ -391,6 +438,7 @@ export function dbTargets(inv: Invocation): string[] {
     case 'functions':
     case 'registered-models':
       if (verb === 'list' || verb === 'list-summaries') id('UC', a0 && a1 ? `${a0}.${a1}` : flag(inv.args, '--catalog-name') && flag(inv.args, '--schema-name') ? `${flag(inv.args, '--catalog-name')}.${flag(inv.args, '--schema-name')}` : '')
+      else if (group === 'tables' && verb === 'create' && a1 && rest[2]) id('UC', `${a1}.${rest[2]}.${a0}`)
       else id('UC', a0)
       break
     case 'volumes':

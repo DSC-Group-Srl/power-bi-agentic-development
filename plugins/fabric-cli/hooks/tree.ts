@@ -56,12 +56,16 @@ export function merge(nodes: TreeNode[], parent: string, kids: TreeNode[]): Tree
     }
     return out
   }
-  const known = new Set(nodes.map(n => n.id))
+  const known = new Map(nodes.map(n => [n.id, n]))
   const loaded = (id: string) => {
     const cs = under.get(id) ?? []
     return cs.length > 0 && !cs.some(c => c.kind === 'placeholder')
   }
-  const keep = new Set(kids.filter(k => k.kind !== 'placeholder' && known.has(k.id) && loaded(k.id)).map(k => k.id))
+  const same = (k: TreeNode) => {
+    const old = known.get(k.id)
+    return Boolean(old) && old?.kind === k.kind && old?.sig === k.sig
+  }
+  const keep = new Set(kids.filter(k => k.kind !== 'placeholder' && same(k) && loaded(k.id)).map(k => k.id))
   const gone = new Set(subtree(parent).map(n => n.id))
   const out = nodes.filter(n => !gone.has(n.id))
   for (const k of kids) {

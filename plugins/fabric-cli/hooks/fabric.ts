@@ -31,13 +31,10 @@ function stub(parent: string): TreeNode {
 
 function entries(stdout: string): Entry[] {
   const start = stdout.indexOf('{')
-  if (start < 0) return []
-  try {
-    const parsed = JSON.parse(stdout.slice(start)) as { result?: { data?: Entry[] } }
-    return (parsed.result?.data ?? []).filter(e => typeof e?.name === 'string')
-  } catch {
-    return []
-  }
+  if (start < 0) throw new Error('fab ls returned no JSON')
+  const parsed = JSON.parse(stdout.slice(start)) as { result?: { data?: Entry[] } }
+  if (!parsed.result || !Array.isArray(parsed.result.data ?? [])) throw new Error('fab ls returned an unexpected shape')
+  return (parsed.result.data ?? []).filter(e => typeof e?.name === 'string')
 }
 
 function split(entry: string): { name: string; type: string } {

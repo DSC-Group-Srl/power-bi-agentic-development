@@ -5,7 +5,7 @@ import { glyph, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { modelOf, parseChildren, parseWorkspaces, PLACEHOLDER } from './fabric'
-import { FAB_TONE, fabCalls, fabKind, fabPositionals, fabWorkspaces, invocations, posix, targetLabel, tokenize, useDrives } from './parse'
+import { FAB_TONE, fabCalls, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, posix, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
@@ -41,7 +41,7 @@ const FONT_SCRIPT =
   'p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d " "); done; echo ok'
 
 let lastPress = { key: '', at: 0 }
-let view = { from: 0, max: 0 }
+const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
 let blink: Timer | null = null
@@ -83,7 +83,7 @@ function jumpTo(ex: Explorer, query: string): Partial<Explorer> {
 
 async function copyOf($: EngineInterface, text: string, surface?: string): Promise<void> {
   const done = await $.ui.copy({ text, ...(surface ? { surface: surface as 'terminal' } : {}) })
-  $.ui.toast(done ? `Copied ${text}` : 'Could not copy')
+  $.ui.toast(done.isCopied ? `Copied ${text}` : 'Could not copy')
 }
 
 function clean(segs: Seg[]): Seg[] {
@@ -99,31 +99,51 @@ async function installed($: EngineInterface, cmd: string): Promise<boolean> {
   }
 }
 
+const LAUNCH = 'setsid "$@" </dev/null >/dev/null 2>&1 & p=$!; sleep 1; kill -0 "$p" 2>/dev/null && exit 0; wait "$p"'
+
 async function launch($: EngineInterface, ...choices: string[][]): Promise<void> {
   for (const argv of choices) {
     if (!(await installed($, argv[0] ?? ''))) continue
     try {
-      if ((await $.process.run(['setsid', '-f', 'sh', '-c', 'exec "$@" </dev/null >/dev/null 2>&1', 'sh', ...argv], { timeoutMs: 10_000 })).exitCode === 0) return
+      if ((await $.process.run(['sh', '-c', LAUNCH, 'sh', ...argv], { timeoutMs: 15_000 })).exitCode === 0) return
     } catch {
-      break
+      continue
     }
-    break
   }
   $.ui.toast(`could not start ${choices.map(c => c[0] ?? '').join(' or ')}`)
+}
+
+async function started($: EngineInterface, argv: string[]): Promise<void> {
+  try {
+    const run = await $.process.run(argv, { timeoutMs: 10_000 })
+    if (run.exitCode !== 0) $.ui.toast(`could not start ${argv[0] ?? ''}: ${(run.stderr || run.stdout).trim().split('\n')[0] ?? ''}`)
+  } catch {
+    $.ui.toast(`could not start ${argv[0] ?? ''}`)
+  }
+}
+
+const slots = { busy: 0, queue: [] as (() => void)[] }
+
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (slots.busy < 4) slots.busy++
+  else await new Promise<void>(resolve => slots.queue.push(resolve))
+  try {
+    return await fn()
+  } finally {
+    const next = slots.queue.shift()
+    if (next) next()
+    else slots.busy--
+  }
 }
 
 async function openUrl($: EngineInterface, url: string): Promise<void> {
   const os = await osName($)
   if (os === 'linux') return launch($, ['gio', 'open', url], ['xdg-open', url])
-  try {
-    await $.process.run(os === 'darwin' ? ['open', url] : ['cmd', '/c', 'start', '', url], { timeoutMs: 10_000 })
-  } catch {
-    $.ui.toast(`could not open ${url}`)
-  }
+  return started($, os === 'darwin' ? ['open', url] : ['rundll32', 'url.dll,FileProtocolHandler', url])
 }
 
-function cmdq(arg: string): string {
-  return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`
+function psq(arg: string): string {
+  return `'${arg.replace(/'/g, "''")}'`
 }
 
 function shq(arg: string): string {
@@ -137,15 +157,11 @@ async function terminal($: EngineInterface, linux: string[], cmd: string[], cwd 
     if (!(await installed($, linux[0] ?? ''))) return $.ui.toast(`${linux[0] ?? ''} is not installed`)
     return launch($, ['xdg-terminal-exec', ...linux], ['x-terminal-emulator', '-e', ...linux])
   }
-  const argv =
-    os === 'darwin'
-      ? ['osascript', '-e', `tell application "Terminal" to do script "${(cwd ? `cd ${shq(cwd)} && ${line}` : line).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`, '-e', 'tell application "Terminal" to activate']
-      : ['cmd', '/c', 'start', '', 'cmd', '/k', cwd ? `cd /d "${cwd.replace(/\//g, '\\')}" && ${cmd.map(cmdq).join(' ')}` : cmd.map(cmdq).join(' ')]
-  try {
-    await $.process.run(argv, { timeoutMs: 10_000 })
-  } catch {
-    $.ui.toast(`could not start ${argv[0] ?? ''}`)
+  if (os === 'darwin') {
+    return started($, ['osascript', '-e', `tell application "Terminal" to do script "${(cwd ? `cd ${shq(cwd)} && ${line}` : line).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`, '-e', 'tell application "Terminal" to activate'])
   }
+  const inner = `${cwd ? `Set-Location -LiteralPath ${psq(cwd.replace(/\//g, '\\'))}; ` : ''}& ${cmd.map(psq).join(' ')}`
+  return started($, ['powershell', '-NoProfile', '-Command', `Start-Process powershell -ArgumentList @('-NoExit', '-Command', ${psq(inner)})`])
 }
 
 async function fontState($: EngineInterface, charset: string, name: string): Promise<'ok' | 'stale' | 'missing'> {
@@ -185,19 +201,19 @@ async function get($: EngineInterface): Promise<Explorer> {
 
 async function put($: EngineInterface, fn: (ex: Explorer) => Explorer): Promise<void> {
   for (let i = 0; ; i++) {
-    const last = i >= 20
+    if (i >= 50) throw new Error('explorer state is busy; try again')
     const [view, tree] = await Promise.all([$.state.get(STATE), $.state.get(NODES)])
     const cur: Explorer = { ...empty(), ...view.value, nodes: tree.value ?? [] }
     const next = fn(cur)
     if (next.nodes !== cur.nodes) {
-      const done = await $.state.set(NODES, next.nodes, last ? {} : { ifVersion: tree.version })
-      if (!done.isSet && !last) continue
+      const done = await $.state.set(NODES, next.nodes, { ifVersion: tree.version })
+      if (!done.isSet) continue
     }
     const keys = Object.keys(next) as (keyof Explorer)[]
     if (!keys.some(k => k !== 'nodes' && next[k] !== cur[k])) return
     const { nodes: _nodes, ...rest } = next
-    const done = await $.state.set(STATE, { ...rest, nodes: [] }, last ? {} : { ifVersion: view.version })
-    if (done.isSet || last) return
+    const done = await $.state.set(STATE, { ...rest, nodes: [] }, { ifVersion: view.version })
+    if (done.isSet) return
   }
 }
 
@@ -207,13 +223,13 @@ function patch($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>) {
 
 async function patchView($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>): Promise<void> {
   for (let i = 0; ; i++) {
-    const last = i >= 20
+    if (i >= 50) throw new Error('explorer state is busy; try again')
     const view = await $.state.get(STATE)
     const cur: Explorer = { ...empty(), ...view.value, nodes: [] }
     const change = fn(cur)
     if (Object.keys(change).length === 0) return
-    const done = await $.state.set(STATE, { ...cur, ...change, nodes: [] }, last ? {} : { ifVersion: view.version })
-    if (done.isSet || last) return
+    const done = await $.state.set(STATE, { ...cur, ...change, nodes: [] }, { ifVersion: view.version })
+    if (done.isSet) return
   }
 }
 
@@ -304,7 +320,10 @@ async function clearBusy($: EngineInterface, marks: Mark[]): Promise<void> {
 
 async function point($: EngineInterface, target: Target | null, opened: 'asked' | 'unasked', fresh = false): Promise<boolean> {
   const moved = !sameTarget((await get($)).target, target)
-  if (moved) await put($, () => ({ ...empty(), target }))
+  if (moved) {
+    treeGen++
+    await put($, () => ({ ...empty(), target }))
+  }
   else if (fresh) await patchView($, () => ({ expanded: [], query: '', selected: '', detail: [], cursor: '' }))
   if (opened === 'asked' || (moved && target)) {
     const title = titleFor(target)
@@ -330,10 +349,30 @@ async function openWeb($: EngineInterface, ex: Explorer, n: TreeNode): Promise<v
   else $.ui.toast('no Fabric link for this object')
 }
 
+let fabContext: { bin: string; env: Record<string, string>; cwd: string } = { bin: 'fab', env: {}, cwd: '' }
+let treeGen = 0
+
+function contextOf(inv: { bin: string; env: Record<string, string>; cwd: string }): typeof fabContext {
+  const env = Object.fromEntries(Object.entries(inv.env).filter(([k]) => /^(FAB_|AZURE_|IDENTITY_|REQUESTS_CA_BUNDLE$|HTTPS?_PROXY$|NO_PROXY$)/i.test(k)))
+  return { bin: inv.bin.includes('/') ? inv.bin : 'fab', env, cwd: inv.cwd }
+}
+
+function identityOf(env: Record<string, string>): string {
+  return [env.FAB_TENANT_ID, env.FAB_SPN_CLIENT_ID].filter(Boolean).join('|')
+}
+
 async function fabLs($: EngineInterface, path?: string): Promise<string> {
-  const argv = path ? ['fab', 'ls', path, '-l', '--output_format', 'json'] : ['fab', 'ls', '-l', '--output_format', 'json']
-  const run = await $.process.run(argv, { timeoutMs: 60_000 })
+  const ctx = fabContext
+  const where = path ? `/${path.replace(/^\/+/, '')}` : '/'
+  const run = await limited(() =>
+    $.process.run([ctx.bin, 'ls', where, '-l', '--output_format', 'json'], {
+      timeoutMs: 60_000,
+      ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}),
+      ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
+    }),
+  )
   if (run.exitCode !== 0) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || 'fab ls failed')
+  if (run.isStdoutTruncated) throw new Error(`fab ls ${where}: too much output to show`)
   return run.stdout
 }
 
@@ -397,6 +436,7 @@ async function doRefresh($: EngineInterface): Promise<void> {
   const target = (await get($)).target
   if (!target) return
   await patchView($, () => ({ status: 'loading' }))
+  treeGen++
   try {
     const nodes = parseWorkspaces(await fabLs($))
     await patch($, cur => (sameTarget(cur.target, target) ? { nodes, expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
@@ -408,43 +448,45 @@ async function doRefresh($: EngineInterface): Promise<void> {
 
 const rerun = new Map<string, Promise<boolean>>()
 
-function reloadWorkspace($: EngineInterface, workspace: string): Promise<boolean> {
-  const key = `reload:${workspace.toLowerCase()}`
+function reloadNode($: EngineInterface, id: string): Promise<boolean> {
+  const key = `reload:${id.toLowerCase()}`
   const running = loading.get(key)
   if (running) {
-    const next =
-      rerun.get(key) ??
-      running.then(
-        () => {
-          rerun.delete(key)
-          return reloadWorkspace($, workspace)
-        },
-        () => {
-          rerun.delete(key)
-          return reloadWorkspace($, workspace)
-        },
-      )
+    const again = () => {
+      rerun.delete(key)
+      return reloadNode($, id)
+    }
+    const next = rerun.get(key) ?? running.then(again, again)
     rerun.set(key, next)
     return next
   }
   const job = (async () => {
-    const first = wsNode((await get($)).nodes, workspace)
-    const pending = first ? loading.get(first.id) : undefined
+    const pending = loading.get(id)
     if (pending) await pending.catch(() => false)
     const ex = await get($)
-    const ws = wsNode(ex.nodes, workspace)
-    if (!ws || !isLoaded(ex.nodes, ws.id)) return true
+    const n = ex.nodes.find(x => x.id === id)
+    if (!n || !isLoaded(ex.nodes, n.id)) return true
+    const gen = treeGen
     try {
-      const kids = parseChildren(await fabLs($, ws.path), ws, ex.nodes)
-      await patch($, cur => ({ nodes: merge(cur.nodes, ws.id, kids) }))
-    } catch {
+      const kids = parseChildren(await fabLs($, n.path), n, ex.nodes)
+      const owned = statusOwner === n.id
+      if (owned) statusOwner = ''
+      await patch($, cur => (gen === treeGen && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
+    } catch (err) {
+      statusOwner = n.id
+      await patchView($, () => ({ status: errorText(err) }))
       return false
     }
-    await expandOpen($, ws.id)
+    await expandOpen($, n.id)
     return true
   })().finally(() => loading.delete(key))
   loading.set(key, job)
   return job
+}
+
+async function reloadWorkspace($: EngineInterface, workspace: string): Promise<boolean> {
+  const ws = wsNode((await get($)).nodes, workspace)
+  return ws ? reloadNode($, ws.id) : true
 }
 
 function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
@@ -453,12 +495,13 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
   const job = (async () => {
     const ex = await get($)
     if (!ex.nodes.some(c => c.parent === n.id && c.kind === PLACEHOLDER)) return true
+    const gen = treeGen
     try {
       const kids = parseChildren(await fabLs($, n.path), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       await patch($, cur =>
-        cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)
+        gen === treeGen && cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)
           ? { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...(owned ? { status: '' } : {}) }
           : owned
             ? { status: '' }
@@ -515,7 +558,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   const detail = [`${n.kind} ${n.name}`, `fab path: ${n.path}`]
   const model = modelOf(n)
   if (model) detail.push(`model explorer: /model-explorer "${model.server}" "${model.database}"`)
-  await patchView($, () => ({ detail }))
+  await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
 }
 
 function contextFor(ex: Explorer, n: TreeNode): string {
@@ -525,6 +568,72 @@ function contextFor(ex: Explorer, n: TreeNode): string {
     `fab path: ${n.path}`,
     ...ex.detail.slice(2),
   ].join('\n')
+}
+
+const waiting = new Map<string, () => Promise<void>>()
+
+function backgroundOf(result: unknown): string {
+  if (!result || typeof result !== 'object') return ''
+  const id = (result as { backgroundTaskId?: unknown }).backgroundTaskId
+  return typeof id === 'string' ? id : ''
+}
+
+async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<string>, succeeded: boolean): Promise<void> {
+  const head = calls[0]
+  if (!head) return
+  fabContext = contextOf(head)
+  const identity = identityOf(head.env)
+  const moved = await point($, identity ? { kind: 'fabric', identity } : { kind: 'fabric' }, 'unasked')
+  const fresh0 = moved || (await get($)).nodes.length === 0
+  if (fresh0) await refresh($)
+  const prior = await get($)
+  const before = new Set(prior.expanded)
+  const lower = (xs: string[]) => [...new Map(xs.map(x => [x.toLowerCase(), x])).values()]
+  const changes = calls.filter(inv => fabKind(inv) === 'modify' || fabKind(inv) === 'upload')
+  const whole = new Set(
+    changes
+      .filter(inv => WHOLE_VERBS.has(inv.args[0] ?? '') || (inv.args[0] === 'set' && inv.args.some(a => /displayname/i.test(a))))
+      .flatMap(inv => fabPositionals(inv.args.slice(1)).filter(a => /^\/?[^/]+\.Workspace\/?$/i.test(a)).flatMap(a => fabWorkspaces({ ...inv, args: ['', a] })))
+      .map(w => w.toLowerCase()),
+  )
+  if (whole.size && !fresh0) await relistRoot($)
+  await pool(lower(calls.flatMap(fabWorkspaces).filter(w => !whole.has(w.toLowerCase()))), w => reveal($, w))
+  await pool(
+    lower(
+      changes.flatMap(fabWorkspaces).filter(w => {
+        if (whole.has(w.toLowerCase())) return false
+        const id = wsId(prior.nodes, w)
+        return isLoaded(prior.nodes, id) || stale.has(id)
+      }),
+    ),
+    w => reloadWorkspace($, w),
+  )
+  const folders = new Set<string>()
+  for (const inv of changes) {
+    for (const a of fabPositionals(inv.args.slice(1))) {
+      const segs = a.replace(/^\/+|\/+$/g, '').split('/')
+      for (let i = 2; i < segs.length; i++) {
+        const want = segs.slice(0, i).join('/').toLowerCase()
+        const n = prior.nodes.find(x => x.path.toLowerCase() === want)
+        if (n && isLoaded(prior.nodes, n.id)) folders.add(n.id)
+      }
+    }
+  }
+  await pool([...folders], id => reloadNode($, id))
+  for (const a of lower(calls.flatMap(inv => inv.args.slice(1).filter(x => /\.Workspace\//i.test(x))))) await revealPath($, a)
+  if (!succeeded) return
+  const fresh = await get($)
+  const byTone = new Map<string, { touched: string[]; opened: string[] }>()
+  for (const inv of calls) {
+    const touched = fabTouched(inv, fresh.nodes)
+    const opened = touched.length ? fabWorkspaces(inv).map(w => wsId(fresh.nodes, w)).filter(id => !before.has(id)) : []
+    const tone = FAB_TONE[fabKind(inv)]
+    const group = byTone.get(tone) ?? { touched: [], opened: [] }
+    group.touched.push(...touched)
+    group.opened.push(...opened)
+    byTone.set(tone, group)
+  }
+  for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
 }
 
 export const register: Register = (on, options) => {
@@ -541,8 +650,9 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: PANE }, async ($, e) => {
-    if (e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-explorer.' }
-    if (e.presentation && e.presentation.columns < 110) return { text: 'The Fabric explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-explorer.' }
+    const terminalOnly = !(await $.session.surfaces().catch(() => ['terminal'])).some(x => x !== 'terminal')
+    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-explorer.' }
+    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Fabric explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-explorer.' }
     noDock = false
     const [workspace] = tokenize(e.args ?? '')
     await point($, { kind: 'fabric' }, 'asked', true)
@@ -559,55 +669,23 @@ export const register: Register = (on, options) => {
     if (closed || noDock) return next(e)
     const ex = await get($)
     const marks: Mark[] = calls.map(inv => ({ ids: [HEADER, ...fabWorkspaces(inv).map(w => wsId(ex.nodes, w)), ...fabTouched(inv, ex.nodes)], tone: FAB_TONE[fabKind(inv)] }))
+    await markBusy($, marks)
     let result: Awaited<ReturnType<typeof next>>
     try {
-      await markBusy($, marks)
       result = await next(e)
-    } finally {
+    } catch (err) {
       await clearBusy($, marks)
+      throw err
     }
-    if (result.deny || result.isError || closed || noDock) return result
+    const task = result.deny ? '' : backgroundOf(result.result)
     const stale = new Set(loading.keys())
-    void (async () => {
-      const moved = await point($, { kind: 'fabric' }, 'unasked')
-      const fresh0 = moved || (await get($)).nodes.length === 0
-      if (fresh0) await refresh($)
-      const prior = await get($)
-      const before = new Set(prior.expanded)
-      const lower = (xs: string[]) => [...new Map(xs.map(x => [x.toLowerCase(), x])).values()]
-      const changes = calls.filter(inv => fabKind(inv) === 'modify' || fabKind(inv) === 'upload')
-      const whole = new Set(
-        changes
-          .filter(inv => WHOLE_VERBS.has(inv.args[0] ?? '') || (inv.args[0] === 'set' && inv.args.some(a => /displayname/i.test(a))))
-          .flatMap(inv => fabPositionals(inv.args.slice(1)).filter(a => /^\/?[^/]+\.Workspace\/?$/i.test(a)).flatMap(a => fabWorkspaces({ ...inv, args: ['', a] })))
-          .map(w => w.toLowerCase()),
-      )
-      if (whole.size && !fresh0) await relistRoot($)
-      await pool(lower(calls.flatMap(fabWorkspaces).filter(w => !whole.has(w.toLowerCase()))), w => reveal($, w))
-      await pool(
-        lower(
-          changes.flatMap(fabWorkspaces).filter(w => {
-            if (whole.has(w.toLowerCase())) return false
-            const id = wsId(prior.nodes, w)
-            return isLoaded(prior.nodes, id) || stale.has(id)
-          }),
-        ),
-        w => reloadWorkspace($, w),
-      )
-      for (const a of lower(calls.flatMap(inv => inv.args.slice(1).filter(x => /\.Workspace\//i.test(x))))) await revealPath($, a)
-      const fresh = await get($)
-      const byTone = new Map<string, { touched: string[]; opened: string[] }>()
-      for (const inv of calls) {
-        const touched = fabTouched(inv, fresh.nodes)
-        const opened = touched.length ? fabWorkspaces(inv).map(w => wsId(fresh.nodes, w)).filter(id => !before.has(id)) : []
-        const tone = FAB_TONE[fabKind(inv)]
-        const group = byTone.get(tone) ?? { touched: [], opened: [] }
-        group.touched.push(...touched)
-        group.opened.push(...opened)
-        byTone.set(tone, group)
-      }
-      for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
-    })().catch(() => undefined)
+    const settle = async () => {
+      await clearBusy($, marks)
+      if (result.deny || closed || noDock) return
+      await afterFab($, calls, stale, !result.isError)
+    }
+    if (task) waiting.set(task, settle)
+    else void settle().catch(() => undefined)
     return result
   })
 
@@ -619,6 +697,7 @@ export const register: Register = (on, options) => {
 
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
+    const view = views.get(e.surface) ?? { from: 0, max: 0 }
     const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
     const ex = await get($)
     if (typeof data.scrollTo === 'number') {
@@ -664,6 +743,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
     if (to !== ex.scroll) await patchView($, () => ({ scroll: to }))
@@ -671,6 +751,13 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    if (e.origin?.kind === 'task-notification') {
+      for (const [task, settle] of waiting) {
+        if (!e.text.includes(task)) continue
+        waiting.delete(task)
+        void settle().catch(() => undefined)
+      }
+    }
     const ex = await get($)
     const n = ex.nodes.find(x => x.id === ex.selected)
     if (!n || !ex.target || closed || noDock) return next(e)
@@ -717,7 +804,7 @@ export const register: Register = (on, options) => {
       from = Math.max(0, Math.min(ex.scroll, max))
       pinned = []
     }
-    view = { from, max }
+    views.set(e.surface, { from, max })
     const shown = rows.slice(from, from + room - pinned.length)
     const sel = ex.nodes.find(n => n.id === ex.selected)
     const clip = (s: string, max = width) => (s.length > max ? s.slice(0, max - 1) + '…' : s)

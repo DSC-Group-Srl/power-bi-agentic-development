@@ -1,4 +1,4 @@
-export type Target = { kind: 'fabric' }
+export type Target = { kind: 'fabric'; identity?: string }
 
 export type TreeNode = {
   id: string

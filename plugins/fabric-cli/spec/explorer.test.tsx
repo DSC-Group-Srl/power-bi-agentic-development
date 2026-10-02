@@ -18,7 +18,10 @@ const ITEMS: Record<string, { name: string; id: string }[]> = {
   'My WS.Workspace': [{ name: 'My Model.SemanticModel', id: UUID(905) }],
 }
 let onTool: ((e: any) => Promise<void>) | null = null
+let toolResult: any = null
+let copyResult: any = { isCopied: true }
 const failing = new Set<string>()
+const toasts: string[] = []
 
 function world(on: any, env: Record<string, string>, ran: Ran) {
   mock.env(on, env)
@@ -37,10 +40,13 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
     closes.push(e)
     return {}
   })
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_$: any, e: any) => {
+    toasts.push(String(e?.text ?? e))
+    return { value: undefined }
+  })
   on('ui.copy', (_$: any, e: any) => {
     copied.push(e.text)
-    return { value: true }
+    return { value: copyResult }
   })
   on('fs.read', () => {
     throw new Error('none')
@@ -56,7 +62,7 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
     if (argv[0] === 'uname') return ok(env.OS ? '' : env.HOME?.startsWith('/Users') ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'fab' && argv[1] === 'ls') {
-      const path = argv[2] && !argv[2].startsWith('-') ? argv[2] : ''
+      const path = argv[2] && !argv[2].startsWith('-') ? argv[2].replace(/^\/+/, '') : ''
       if (failing.has(path)) return { value: { exitCode: 1, stdout: '', stderr: 'Forbidden', isStdoutTruncated: false, isStderrTruncated: false } }
       const data = path ? (ITEMS[path] ?? []) : WORKSPACES
       return ok(JSON.stringify({ status: 'Success', result: { data } }))
@@ -65,7 +71,7 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
   })
   on('tool.call', async (_$: any, e: any) => {
     if (onTool) await onTool(e)
-    return { result: { stdout: '', stderr: '' } }
+    return toolResult ?? { result: { stdout: '', stderr: '' } }
   })
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
   return { clock, copied }
@@ -140,7 +146,7 @@ test('a fab export Claude runs shimmers teal on the item; fab get with -o too', 
   await ui.unmount()
 })
 
-test('Windows: the portal and te open through cmd start, never setsid or osascript', { timeoutMs: 20_000 }, async ($, on) => {
+test('Windows: the portal opens through rundll32 and te through PowerShell with literal arguments, never cmd, setsid or osascript', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const { clock } = world(on, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\k' }, ran)
   const ui = await open($, clock, 'terminal')
@@ -149,11 +155,11 @@ test('Windows: the portal and te open through cmd start, never setsid or osascri
   await ui.post({ press: 'W:WS00/Sales.SemanticModel', ctrl: true }, { in: 'rows' })
   await ui.post({ press: 'W:WS00/Sales.SemanticModel', shift: true }, { in: 'rows' })
   await clock.settle()
-  const starts = ran.filter(a => a[0] === 'cmd')
-  expect(starts.length).toBe(2)
-  expect(starts[0]?.slice(0, 4)).toEqual(['cmd', '/c', 'start', ''])
-  expect(starts[1]?.at(-1)).toBe('te interactive -s WS00 -d Sales')
-  expect(ran.some(a => ['setsid', 'osascript', 'uname', 'xdg-terminal-exec'].includes(a[0] ?? ''))).toBe(false)
+  const portal = ran.find(a => a[0] === 'rundll32')
+  expect(portal?.slice(0, 2)).toEqual(['rundll32', 'url.dll,FileProtocolHandler'])
+  const shell = ran.find(a => a[0] === 'powershell')
+  expect(shell?.at(-1)).toContain("& ''te'' ''interactive'' ''-s'' ''WS00'' ''-d'' ''Sales''")
+  expect(ran.some(a => ['cmd', 'setsid', 'osascript', 'uname', 'xdg-terminal-exec'].includes(a[0] ?? ''))).toBe(false)
   await ui.unmount()
 })
 
@@ -285,7 +291,7 @@ test('sidebar only: no pane in the default layout or a narrow terminal, and an i
   void copied
 })
 
-const lists = (ran: Ran, path: string) => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === path).length
+const lists = (ran: Ran, path: string) => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === `/${path}`).length
 
 test('a failing workspace is listed once per refresh, and its error stays until that workspace loads', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
@@ -375,7 +381,7 @@ test('creating or deleting a whole workspace re-lists the tenant instead of list
   const ran: Ran = []
   const { clock } = world(on, { HOME: '/home/k' }, ran)
   const ui = await open($, clock, 'terminal')
-  const roots = () => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === '-l').length
+  const roots = () => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === '/').length
   const before = roots()
   await $.tool.call({ tool: 'Bash', command: 'fab rm WS05.Workspace -f' } as any)
   await clock.settle()
@@ -443,5 +449,72 @@ test('a commit message that mentions fab commands runs nothing', { timeoutMs: 20
   await $.tool.call({ tool: 'Bash', command: 'git commit -m "explain \\`fab rm WS04.Workspace -f\\`"' } as any)
   await clock.settle()
   expect(ran.filter(a => a[0] === 'fab').length).toBe(before)
+  await ui.unmount()
+})
+
+test('an item created inside an open folder appears without a manual refresh', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  await ui.post({ press: 'W:WS00/Ops.Folder' }, { in: 'rows' })
+  await clock.settle()
+  const saved = ITEMS['WS00.Workspace/Ops.Folder']
+  ITEMS['WS00.Workspace/Ops.Folder'] = [...(saved ?? []), { name: 'Created.Notebook', id: UUID(960) }]
+  await $.tool.call({ tool: 'Bash', command: 'fab mkdir WS00.Workspace/Ops.Folder/Created.Notebook' } as any)
+  await clock.settle()
+  const p = await rowsOf(ui)
+  expect(p.rows.some((r: any) => r.id === 'W:WS00/Ops.Folder/Created.Notebook')).toBe(true)
+  ITEMS['WS00.Workspace/Ops.Folder'] = saved ?? []
+  await ui.unmount()
+})
+
+test('a compound command that fails after a create still shows the created item', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS02' }, { in: 'rows' })
+  await clock.settle()
+  ITEMS['WS02.Workspace'] = [{ name: 'Made.Report', id: UUID(961) }]
+  toolResult = { result: { stdout: '', stderr: 'boom' }, isError: true }
+  await $.tool.call({ tool: 'Bash', command: 'fab mkdir WS02.Workspace/Made.Report && false' } as any)
+  toolResult = null
+  await clock.settle()
+  const p = await rowsOf(ui)
+  expect(p.rows.some((r: any) => r.id === 'W:WS02/Made.Report')).toBe(true)
+  delete ITEMS['WS02.Workspace']
+  await ui.unmount()
+})
+
+test('a fab command sent to the background keeps its spinner until its task notification arrives', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  toolResult = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg77' } }
+  await $.tool.call({ tool: 'Bash', command: 'fab export "WS00.Workspace/Sales.SemanticModel" -o ./out -f' } as any)
+  toolResult = null
+  await clock.advance(200)
+  expect(JSON.stringify(await rowsOf(ui))).toContain('"spin":true')
+  await $.prompt.submit({ text: '<task-notification><task-id>bg77</task-id><status>completed</status></task-notification>', origin: { kind: 'task-notification' } } as any)
+  await clock.settle()
+  expect(JSON.stringify((await rowsOf(ui)).rows.find((r: any) => r.id === 'W:WS00'))).not.toContain('"spin":true')
+  await ui.unmount()
+})
+
+test('rm -f on a whole workspace re-lists the tenant, and a refused clipboard write says so', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  const roots = () => ran.filter(a => a[0] === 'fab' && a[1] === 'ls' && a[2] === '/').length
+  const before = roots()
+  await $.tool.call({ tool: 'Bash', command: 'fab rm -f WS05.Workspace' } as any)
+  await clock.settle()
+  expect(roots() - before).toBe(1)
+  copyResult = { isCopied: false, reason: 'no-clipboard' }
+  await ui.post({ copy: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  copyResult = { isCopied: true }
+  expect(toasts.at(-1)).toBe('Could not copy')
   await ui.unmount()
 })

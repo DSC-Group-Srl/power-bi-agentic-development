@@ -53,7 +53,7 @@ function world(on: any, env: Record<string, string>, ran: Ran, copied: string[])
   on('ui.toast', () => ({ value: undefined }))
   on('ui.copy', (_$: any, e: any) => {
     copied.push(e.text)
-    return { value: true }
+    return { value: { isCopied: true } }
   })
   on('fs.read', (_$: any, e: any) => {
     if (String(e.path).replace(/\\/g, '/').endsWith('/.databrickscfg')) return { value: `[DEFAULT]\nhost = ${HOST}\n` }
@@ -163,7 +163,7 @@ test('long sections scroll, and a databricks command Claude runs lights the obje
   await ui.unmount()
 })
 
-test('Windows: objects open through cmd start; databricks auth is ignored', { timeoutMs: 20_000 }, async ($, on) => {
+test('Windows: objects open through rundll32 with the URL as one literal argument; databricks auth is ignored', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const clock = world(on, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\k' }, ran, [])
   const ui = await open($, clock, 'terminal')
@@ -171,12 +171,12 @@ test('Windows: objects open through cmd start; databricks auth is ignored', { ti
   await clock.settle()
   await ui.post({ press: 'CL:0123-abc', ctrl: true }, { in: 'rows' })
   await clock.settle()
-  expect(ran).toContainEqual(['cmd', '/c', 'start', '', `${HOST}/compute/clusters/0123-abc`])
+  expect(ran).toContainEqual(['rundll32', 'url.dll,FileProtocolHandler', `${HOST}/compute/clusters/0123-abc`])
   const before = ran.length
   await $.tool.call({ tool: 'Bash', command: 'databricks auth login --host x' } as any)
   await clock.advance(50)
   expect(ran.length).toBe(before)
-  expect(ran.some(a => ['setsid', 'osascript', 'uname', 'find'].includes(a[0] ?? ''))).toBe(false)
+  expect(ran.some(a => ['cmd', 'setsid', 'osascript', 'uname', 'find'].includes(a[0] ?? ''))).toBe(false)
   await ui.unmount()
 })
 
@@ -332,5 +332,35 @@ test('job runs re-list nothing, a bundle deploy reloads the open Jobs section', 
   await $.tool.call({ tool: 'Bash', command: 'databricks bundle deploy -t dev' } as any)
   await clock.settle()
   expect(jobs()).toBe(before + 1)
+  await ui.unmount()
+})
+
+test('tables create targets catalog.schema.table, a started cluster refreshes Compute, and a cut-off reload shows its error', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:catalog', 'UC:main', 'UC:main.sales']) {
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  const tables = () => ran.filter(a => a[1] === 'tables' && a[2] === 'list').length
+  const before = tables()
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables create customers main sales EXTERNAL DELTA s3://b/t' } as any)
+  await clock.settle()
+  expect(tables()).toBe(before + 1)
+  await clock.advance(600)
+  await ui.post({ press: 'S:compute' }, { in: 'rows' })
+  await clock.settle()
+  const clusters = () => ran.filter(a => a[1] === 'clusters' && a[2] === 'list').length
+  const c0 = clusters()
+  await $.tool.call({ tool: 'Bash', command: 'databricks clusters start 0123-abc' } as any)
+  await clock.settle()
+  expect(clusters()).toBe(c0 + 1)
+  truncated.add('clusters list')
+  await $.tool.call({ tool: 'Bash', command: 'databricks clusters start 0123-abc' } as any)
+  await clock.settle()
+  truncated.clear()
+  expect(JSON.stringify(await ui.drawn())).toContain('too much output')
   await ui.unmount()
 })

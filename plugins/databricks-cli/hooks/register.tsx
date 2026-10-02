@@ -5,7 +5,7 @@ import { glyph, titleGlyph as dbTitle, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { chainOf, children, hostFrom, listCalls, PLACEHOLDER, roots } from './databricks'
-import { DB_TONE, dbKind, dbProfile, dbTargets, invocations, positionals, posix, tokenize, useDrives } from './parse'
+import { DB_TONE, dbKind, dbProfile, dbTargets, type Invocation, invocations, positionals, posix, tokenize, useDrives } from './parse'
 
 const STATE = { plugin: 'databricks-cli', key: 'explorer' } as const
 const NODES = { plugin: 'databricks-cli', key: 'nodes' } as const
@@ -39,7 +39,7 @@ const FONT_SCRIPT =
   'p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d " "); done; echo ok'
 
 let lastPress = { key: '', at: 0 }
-let view = { from: 0, max: 0 }
+const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
 let blink: Timer | null = null
@@ -82,7 +82,7 @@ function jumpTo(ex: Explorer, query: string): Partial<Explorer> {
 
 async function copyOf($: EngineInterface, text: string, surface?: string): Promise<void> {
   const done = await $.ui.copy({ text, ...(surface ? { surface: surface as 'terminal' } : {}) })
-  $.ui.toast(done ? `Copied ${text}` : 'Could not copy')
+  $.ui.toast(done.isCopied ? `Copied ${text}` : 'Could not copy')
 }
 
 function clean(segs: Seg[]): Seg[] {
@@ -98,27 +98,47 @@ async function installed($: EngineInterface, cmd: string): Promise<boolean> {
   }
 }
 
+const LAUNCH = 'setsid "$@" </dev/null >/dev/null 2>&1 & p=$!; sleep 1; kill -0 "$p" 2>/dev/null && exit 0; wait "$p"'
+
 async function launch($: EngineInterface, ...choices: string[][]): Promise<void> {
   for (const argv of choices) {
     if (!(await installed($, argv[0] ?? ''))) continue
     try {
-      if ((await $.process.run(['setsid', '-f', 'sh', '-c', 'exec "$@" </dev/null >/dev/null 2>&1', 'sh', ...argv], { timeoutMs: 10_000 })).exitCode === 0) return
+      if ((await $.process.run(['sh', '-c', LAUNCH, 'sh', ...argv], { timeoutMs: 15_000 })).exitCode === 0) return
     } catch {
-      break
+      continue
     }
-    break
   }
   $.ui.toast(`could not start ${choices.map(c => c[0] ?? '').join(' or ')}`)
+}
+
+async function started($: EngineInterface, argv: string[]): Promise<void> {
+  try {
+    const run = await $.process.run(argv, { timeoutMs: 10_000 })
+    if (run.exitCode !== 0) $.ui.toast(`could not start ${argv[0] ?? ''}: ${(run.stderr || run.stdout).trim().split('\n')[0] ?? ''}`)
+  } catch {
+    $.ui.toast(`could not start ${argv[0] ?? ''}`)
+  }
+}
+
+const slots = { busy: 0, queue: [] as (() => void)[] }
+
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (slots.busy < 4) slots.busy++
+  else await new Promise<void>(resolve => slots.queue.push(resolve))
+  try {
+    return await fn()
+  } finally {
+    const next = slots.queue.shift()
+    if (next) next()
+    else slots.busy--
+  }
 }
 
 async function openUrl($: EngineInterface, url: string): Promise<void> {
   const os = await osName($)
   if (os === 'linux') return launch($, ['gio', 'open', url], ['xdg-open', url])
-  try {
-    await $.process.run(os === 'darwin' ? ['open', url] : ['cmd', '/c', 'start', '', url], { timeoutMs: 10_000 })
-  } catch {
-    $.ui.toast(`could not open ${url}`)
-  }
+  return started($, os === 'darwin' ? ['open', url] : ['rundll32', 'url.dll,FileProtocolHandler', url])
 }
 
 async function fontState($: EngineInterface, charset: string, name: string): Promise<'ok' | 'stale' | 'missing'> {
@@ -160,19 +180,19 @@ async function get($: EngineInterface): Promise<Explorer> {
 
 async function put($: EngineInterface, fn: (ex: Explorer) => Explorer): Promise<void> {
   for (let i = 0; ; i++) {
-    const last = i >= 20
+    if (i >= 50) throw new Error('explorer state is busy; try again')
     const [view, tree] = await Promise.all([$.state.get(STATE), $.state.get(NODES)])
     const cur: Explorer = { ...empty(), ...view.value, nodes: tree.value ?? [] }
     const next = fn(cur)
     if (next.nodes !== cur.nodes) {
-      const done = await $.state.set(NODES, next.nodes, last ? {} : { ifVersion: tree.version })
-      if (!done.isSet && !last) continue
+      const done = await $.state.set(NODES, next.nodes, { ifVersion: tree.version })
+      if (!done.isSet) continue
     }
     const keys = Object.keys(next) as (keyof Explorer)[]
     if (!keys.some(k => k !== 'nodes' && next[k] !== cur[k])) return
     const { nodes: _nodes, ...rest } = next
-    const done = await $.state.set(STATE, { ...rest, nodes: [] }, last ? {} : { ifVersion: view.version })
-    if (done.isSet || last) return
+    const done = await $.state.set(STATE, { ...rest, nodes: [] }, { ifVersion: view.version })
+    if (done.isSet) return
   }
 }
 
@@ -182,13 +202,13 @@ function patch($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>) {
 
 async function patchView($: EngineInterface, fn: (ex: Explorer) => Partial<Explorer>): Promise<void> {
   for (let i = 0; ; i++) {
-    const last = i >= 20
+    if (i >= 50) throw new Error('explorer state is busy; try again')
     const view = await $.state.get(STATE)
     const cur: Explorer = { ...empty(), ...view.value, nodes: [] }
     const change = fn(cur)
     if (Object.keys(change).length === 0) return
-    const done = await $.state.set(STATE, { ...cur, ...change, nodes: [] }, last ? {} : { ifVersion: view.version })
-    if (done.isSet || last) return
+    const done = await $.state.set(STATE, { ...cur, ...change, nodes: [] }, { ifVersion: view.version })
+    if (done.isSet) return
   }
 }
 
@@ -277,7 +297,11 @@ async function clearBusy($: EngineInterface, marks: Mark[]): Promise<void> {
 async function point($: EngineInterface, target: Target | null, opened: 'asked' | 'unasked', fresh = false): Promise<boolean> {
   const moved = !sameTarget((await get($)).target, target)
   activeProfile = target?.profile ?? ''
-  if (moved) await put($, () => ({ ...empty(), target }))
+  if (moved) {
+    treeGen++
+    hosts.clear()
+    await put($, () => ({ ...empty(), target }))
+  }
   else if (fresh) await patchView($, () => ({ expanded: [], query: '', selected: '', detail: [], cursor: '' }))
   if (opened === 'asked' || (moved && target)) {
     const title = titleFor(target)
@@ -321,7 +345,7 @@ async function hostOf($: EngineInterface, profile: string): Promise<string> {
   return host
 }
 async function dbRun($: EngineInterface, tail: string[], profile: string): Promise<string> {
-  const run = await $.process.run(['databricks', ...tail, '-o', 'json', ...(profile ? ['-p', profile] : [])], { timeoutMs: 60_000 })
+  const run = await limited(() => $.process.run(['databricks', ...tail, '-o', 'json', ...(profile ? ['-p', profile] : [])], { timeoutMs: 60_000 }))
   if (run.exitCode !== 0) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || `databricks ${tail.join(' ')} failed`)
   if (run.isStdoutTruncated) throw new Error(`databricks ${tail.slice(0, 2).join(' ')}: too much output to show`)
   return run.stdout
@@ -332,6 +356,7 @@ async function implicitProfile($: EngineInterface): Promise<string> {
 }
 
 const loading = new Map<string, Promise<boolean>>()
+let treeGen = 0
 let statusOwner = ''
 let activeProfile = ''
 
@@ -370,6 +395,8 @@ async function doRefresh($: EngineInterface): Promise<void> {
   const target = (await get($)).target
   if (!target) return
   await patchView($, () => ({ status: 'loading' }))
+  treeGen++
+  hosts.clear()
   try {
     await patch($, cur => (sameTarget(cur.target, target) ? { nodes: roots(), expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
     await expandOpen($)
@@ -410,10 +437,15 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
     const target = ex.target
     const n = ex.nodes.find(x => x.id === id)
     if (!n || !isLoaded(ex.nodes, n.id)) return true
+    const gen = treeGen
     try {
       const kids = await listChildren($, n, target?.profile ?? '')
-      await patch($, cur => (sameTarget(cur.target, target) ? { nodes: merge(cur.nodes, n.id, kids) } : {}))
-    } catch {
+      const owned = statusOwner === n.id
+      if (owned) statusOwner = ''
+      await patch($, cur => (gen === treeGen && sameTarget(cur.target, target) && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
+    } catch (err) {
+      statusOwner = n.id
+      await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
       return false
     }
     await expandOpen($, n.id)
@@ -431,12 +463,13 @@ function expandNode($: EngineInterface, n: TreeNode): Promise<boolean> {
     const ex = await get($)
     const target = ex.target
     if (!ex.nodes.some(c => c.parent === n.id && c.kind === PLACEHOLDER)) return true
+    const gen = treeGen
     try {
       const kids = await listChildren($, n, target?.profile ?? '')
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       await patch($, cur => {
-        if (!sameTarget(cur.target, target)) return {}
+        if (gen !== treeGen || !sameTarget(cur.target, target)) return {}
         if (!cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)) return owned ? { status: '' } : {}
         return { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...(owned ? { status: '' } : {}) }
       })
@@ -477,7 +510,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   })
   if (!isLeaf && (await expandNode($, n))) await expandOpen($, n.id)
   const detail = [`${n.kind.replace(/^section-/, '').replace(/_/g, ' ')} ${n.name}`, ...(n.path ? [`cli: ${n.path}`] : []), ...(n.note ? [n.note] : [])]
-  await patchView($, () => ({ detail }))
+  await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
 }
 function contextFor(ex: Explorer, n: TreeNode): string {
   return [
@@ -488,6 +521,62 @@ function contextFor(ex: Explorer, n: TreeNode): string {
     ...(n.url ? [`url: ${n.url}`] : []),
   ].join('\n')
 }
+const STATUS_GROUPS = new Set(['clusters', 'warehouses', 'apps', 'pipelines'])
+const waiting = new Map<string, () => Promise<void>>()
+
+function backgroundOf(result: unknown): string {
+  if (!result || typeof result !== 'object') return ''
+  const id = (result as { backgroundTaskId?: unknown }).backgroundTaskId
+  return typeof id === 'string' ? id : ''
+}
+
+type Call = { inv: Invocation; kind: NonNullable<ReturnType<typeof dbKind>> }
+
+async function afterDb($: EngineInterface, calls: Call[], stale: Set<string>, succeeded: boolean): Promise<void> {
+  const fallback = await implicitProfile($)
+  const canon = (p: string) => p || fallback || 'DEFAULT'
+  const resolved = (inv: Invocation) => dbProfile(inv) || inv.env.DATABRICKS_CONFIG_PROFILE || ''
+  const own = calls.filter(c => !c.inv.env.DATABRICKS_HOST && !c.inv.env.DATABRICKS_TOKEN)
+  const first = own[0]
+  if (!first) return
+  const current = (await get($)).target
+  const want = resolved(first.inv)
+  const profile = current && canon(current.profile) === canon(want) ? current.profile : want
+  const moved = await point($, { kind: 'databricks', profile }, 'unasked')
+  if (moved || (await get($)).nodes.length === 0) await refresh($)
+  const mine = own.filter(c => canon(resolved(c.inv)) === canon(profile))
+  const prior = await get($)
+  const before = new Set(prior.expanded)
+  const targets = [...new Set(mine.flatMap(c => dbTargets(c.inv)))]
+  await pool(targets, id => reveal($, chainOf(id)))
+  const reloads = new Set<string>()
+  for (const c of mine) {
+    if (c.kind !== 'modify' && c.kind !== 'upload') continue
+    if (!changesMembers(c.inv.args) && !STATUS_GROUPS.has(positionals(c.inv.args)[0] ?? '')) continue
+    for (const id of dbTargets(c.inv)) {
+      const chain = chainOf(id)
+      const parent = chain[chain.length - 1]
+      if (parent) reloads.add(parent)
+      if (id.startsWith('S:')) reloads.add(id)
+    }
+  }
+  await pool([...reloads].filter(id => isLoaded(prior.nodes, id) || stale.has(`${activeProfile}|${id}`)), id => reloadNode($, id))
+  const fresh = await get($)
+  const present = new Set(fresh.nodes.map(n => n.id))
+  const byTone = new Map<string, { touched: string[]; opened: string[] }>()
+  for (const c of mine) {
+    const touched = dbTargets(c.inv).filter(id => present.has(id))
+    const opened = touched.flatMap(id => chainOf(id)).filter(id => !before.has(id) && present.has(id))
+    const tone = DB_TONE[c.kind]
+    const group = byTone.get(tone) ?? { touched: [], opened: [] }
+    group.touched.push(...touched)
+    group.opened.push(...opened)
+    byTone.set(tone, group)
+  }
+  if (!succeeded) return
+  for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
+}
+
 function changesMembers(args: string[]): boolean {
   const [group = '', verb = ''] = positionals(args)
   if (group === 'fs') return false
@@ -510,8 +599,9 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: PANE }, async ($, e) => {
-    if (e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-explorer.' }
-    if (e.presentation && e.presentation.columns < 110) return { text: 'The Databricks explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-explorer.' }
+    const terminalOnly = !(await $.session.surfaces().catch(() => ['terminal'])).some(x => x !== 'terminal')
+    if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks explorer shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-explorer.' }
+    if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Databricks explorer shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-explorer.' }
     noDock = false
     const [profile = ''] = tokenize(e.args ?? '')
     await point($, { kind: 'databricks', profile }, 'asked', true)
@@ -531,58 +621,23 @@ export const register: Register = (on, options) => {
     const ex = await get($)
     const have = new Set(ex.nodes.map(n => n.id))
     const marks: Mark[] = calls.map(c => ({ ids: [HEADER, ...dbTargets(c.inv).filter(id => have.has(id))], tone: DB_TONE[c.kind] }))
+    await markBusy($, marks)
     let result: Awaited<ReturnType<typeof next>>
     try {
-      await markBusy($, marks)
       result = await next(e)
-    } finally {
+    } catch (err) {
       await clearBusy($, marks)
+      throw err
     }
-    if (result.deny || result.isError || closed || noDock) return result
+    const task = result.deny ? '' : backgroundOf(result.result)
     const stale = new Set(loading.keys())
-    void (async () => {
-      const fallback = await implicitProfile($)
-      const canon = (p: string) => p || fallback || 'DEFAULT'
-      const resolved = (inv: (typeof calls)[number]['inv']) => dbProfile(inv) || inv.env.DATABRICKS_CONFIG_PROFILE || ''
-      const own = calls.filter(c => !c.inv.env.DATABRICKS_HOST && !c.inv.env.DATABRICKS_TOKEN)
-      const first = own[0]
-      if (!first) return
-      const current = (await get($)).target
-      const want = resolved(first.inv)
-      const profile = current && canon(current.profile) === canon(want) ? current.profile : want
-      const moved = await point($, { kind: 'databricks', profile }, 'unasked')
-      if (moved || (await get($)).nodes.length === 0) await refresh($)
-      const mine = own.filter(c => canon(resolved(c.inv)) === canon(profile))
-      const prior = await get($)
-      const before = new Set(prior.expanded)
-      const targets = [...new Set(mine.flatMap(c => dbTargets(c.inv)))]
-      await pool(targets, id => reveal($, chainOf(id)))
-      const reloads = new Set<string>()
-      for (const c of mine) {
-        if (c.kind !== 'modify' && c.kind !== 'upload') continue
-        if (!changesMembers(c.inv.args)) continue
-        for (const id of dbTargets(c.inv)) {
-          const chain = chainOf(id)
-          const parent = chain[chain.length - 1]
-          if (parent) reloads.add(parent)
-          if (id.startsWith('S:')) reloads.add(id)
-        }
-      }
-      await pool([...reloads].filter(id => isLoaded(prior.nodes, id) || stale.has(`${activeProfile}|${id}`)), id => reloadNode($, id))
-      const fresh = await get($)
-      const present = new Set(fresh.nodes.map(n => n.id))
-      const byTone = new Map<string, { touched: string[]; opened: string[] }>()
-      for (const c of mine) {
-        const touched = dbTargets(c.inv).filter(id => present.has(id))
-        const opened = touched.flatMap(id => chainOf(id)).filter(id => !before.has(id) && present.has(id))
-        const tone = DB_TONE[c.kind]
-        const group = byTone.get(tone) ?? { touched: [], opened: [] }
-        group.touched.push(...touched)
-        group.opened.push(...opened)
-        byTone.set(tone, group)
-      }
-      for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
-    })().catch(() => undefined)
+    const settle = async () => {
+      await clearBusy($, marks)
+      if (result.deny || closed || noDock) return
+      await afterDb($, calls, stale, !result.isError)
+    }
+    if (task) waiting.set(task, settle)
+    else void settle().catch(() => undefined)
     return result
   })
 
@@ -594,6 +649,7 @@ export const register: Register = (on, options) => {
 
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
+    const view = views.get(e.surface) ?? { from: 0, max: 0 }
     const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
     const ex = await get($)
     if (typeof data.scrollTo === 'number') {
@@ -639,6 +695,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
     if (to !== ex.scroll) await patchView($, () => ({ scroll: to }))
@@ -646,6 +703,13 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    if (e.origin?.kind === 'task-notification') {
+      for (const [task, settle] of waiting) {
+        if (!e.text.includes(task)) continue
+        waiting.delete(task)
+        void settle().catch(() => undefined)
+      }
+    }
     const ex = await get($)
     const n = ex.nodes.find(x => x.id === ex.selected)
     if (!n || !ex.target || closed || noDock) return next(e)
@@ -692,7 +756,7 @@ export const register: Register = (on, options) => {
       from = Math.max(0, Math.min(ex.scroll, max))
       pinned = []
     }
-    view = { from, max }
+    views.set(e.surface, { from, max })
     const shown = rows.slice(from, from + room - pinned.length)
     const sel = ex.nodes.find(n => n.id === ex.selected)
     const clip = (s: string, max = width) => (s.length > max ? s.slice(0, max - 1) + '…' : s)
