@@ -12,11 +12,9 @@ export function empty(): Explorer {
     selected: '',
     detail: [],
     status: '',
-    flash: [],
-    flashOn: false,
-    flashTones: {},
+    work: null,
+    onboard: null,
     busy: {},
-    flashDim: [],
     scroll: null,
     root: '',
   }

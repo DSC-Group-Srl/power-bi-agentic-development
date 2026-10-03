@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { binOf, invocations, pbirReport, tokenize, useDrives } from '../hooks/parse'
+import { glyph, type Tier, visualLabel } from '../hooks/icons'
 import { type Io, loadReport } from '../hooks/report'
 import Rows from '../hooks/rows'
 import { diff } from '../hooks/tree'
@@ -13,7 +14,7 @@ const PANE = 'report-pane'
 const STATE = { plugin: PLUGIN, key: 'explorer' } as const
 const TREE = { plugin: PLUGIN, key: 'tree' } as const
 const nodes = Array.from({ length: 60 }, (_, i) => ({ id: `T:${i}`, parent: '', kind: 'page', name: `Page${String(i).padStart(2, '0')}`, path: `tables/Table${i}`, hidden: false, sig: '', note: '' }))
-const explorer = (target: any) => ({ target, changed: [], expanded: [], query: '', cursor: '', selected: '', detail: [], status: '', flash: [], flashOn: false, flashTones: {}, busy: {}, flashDim: [], targetUrl: '', scroll: {}, root: '' })
+const explorer = (target: any) => ({ target, changed: [], expanded: [], query: '', cursor: '', selected: '', detail: [], status: '', flash: [], flashDim: [], work: null, targetUrl: '', scroll: {}, root: '' })
 const leaf = (id: string, parent: string, kind: string, name: string, path: string, note = '') => ({ id, parent, kind, name, path, hidden: false, sig: '', note })
 const deep = [
   leaf('R', '', 'report', 'Sales.Report', 'Sales.Report'),
@@ -462,30 +463,32 @@ test('a refresh updates the selected object detail and drops a selection that di
   await ui.unmount()
 })
 
-test('a pbir call that finishes after the report changed leaves the new report busy marker alone', { timeoutMs: 20_000 }, async ($, on) => {
+test('a pbir call that finishes after the report changed leaves the new report working interval alone', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const pending = new Map<string, () => void>()
   const opts: World = { tool: e => new Promise(done => pending.set(e.command, () => done(undefined))) }
   const clock = world(on, { HOME: '/home/k' }, ran, opts)
   await mount($, clock, 'terminal', { kind: 'local', path: '/work/A.Report' })
-  const busy = () => (mem.get(`${STATE.plugin}/${STATE.key}`)?.value as any).busy['#header']
+  const work = () => (mem.get(`${STATE.plugin}/${STATE.key}`)?.value as any).work
   const a = $.tool.call({ tool: 'Bash', command: 'pbir ls' } as any)
   await clock.settle()
-  expect(busy()?.runs).toHaveLength(1)
+  expect(work()?.running).toBe(true)
   await $.command.run({ command: PANE, args: 'B.Report', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any)
   await clock.settle()
-  expect(busy()).toBeUndefined()
+  expect(work()).toBeNull()
   const b = $.tool.call({ tool: 'Bash', command: 'pbir get B.Report' } as any)
   await clock.settle()
-  expect(busy()?.runs).toHaveLength(1)
+  const mine = work()?.run
+  expect(work()?.running).toBe(true)
   pending.get('pbir ls')?.()
   await a
   await clock.settle()
-  expect(busy()?.runs).toHaveLength(1)
+  expect(work()?.run).toBe(mine)
+  expect(work()?.running).toBe(true)
   pending.get('pbir get B.Report')?.()
   await b
   await clock.settle()
-  expect(busy()).toBeUndefined()
+  expect(work()).toBeNull()
 })
 
 test('each surface scrolls within its own pane height', { timeoutMs: 20_000 }, async ($, on) => {
@@ -522,20 +525,23 @@ test('a backgrounded command refreshes when its task ends, not when it launches'
   await $.command.run({ command: PANE, args: 'Sales.Report', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any)
   await clock.settle()
   const visuals = () => ((mem.get(`${TREE.plugin}/${TREE.key}`)?.value as any).nodes as any[]).filter(n => n.kind === 'visual')
-  const busy = () => (mem.get(`${STATE.plugin}/${STATE.key}`)?.value as any).busy['#header']
+  const work = () => (mem.get(`${STATE.plugin}/${STATE.key}`)?.value as any).work
   const ended = (id: string, status: string) =>
     $.session.append({ message: { type: 'user', role: 'user', content: [{ type: 'text', text: `<task-notification>\n<task-id>${id}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<status>${status}</status>\n<summary>Background command completed</summary>\n</task-notification>` }] }, door: 'prompt', origin: { kind: 'task-notification' }, uuid: `u-${id}` } as any).catch(() => undefined)
   opts.tool = async e => ({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: e.command.includes('pbir') ? 'b1' : 'b2' })
   await $.tool.call({ tool: 'Bash', command: 'sleep 1 && pbir rm Sales.Report/Overview.Page/v2.Visual -f', run_in_background: true } as any)
   await clock.settle()
-  expect(busy()?.runs).toHaveLength(1)
+  expect(work()?.running).toBe(true)
   opts.files = pbirFiles({ visuals: 2 })
   await clock.settle()
   expect(visuals()).toHaveLength(3)
   await ended('b1', 'completed')
   await clock.settle()
-  expect(busy()).toBeUndefined()
+  expect(work()?.running).toBe(false)
   expect(visuals()).toHaveLength(2)
+  await clock.advance(3000)
+  await clock.settle()
+  expect(work()).toBeNull()
   const scans = () => ran.filter(a => a[0] === 'find').length
   const before = scans()
   await $.tool.call({ tool: 'Bash', command: `sleep 1; rm -rf '${DEF}/pages/p1/visuals/v1'`, run_in_background: true } as any)
@@ -739,7 +745,7 @@ test('plain glyphs: every report object kind draws its own Unicode symbol and no
   const kinds = new Map(((mem.get(`${TREE.plugin}/${TREE.key}`)?.value as any).nodes as any[]).map(n => [n.id, n.kind]))
   const symbol: Record<string, string> = {
     report: '▣', 'semantic model': '◆', theme: '◐', group: '■', reportfilter: '▿', page: '□', pagefilter: '▿',
-    visual: '▥', 'data role': '◫', field: '│', visualfilter: '▿', bookmark: '⚑', 'ext measure': 'Σ',
+    visual: '#', 'data role': '◫', field: '│', visualfilter: '▿', bookmark: '⚑', 'ext measure': 'Σ',
   }
   expect(new Set(kinds.values())).toEqual(new Set(Object.keys(symbol)))
   for (const r of rows) {
@@ -889,7 +895,7 @@ test('a pane that cannot open while Claude works or a session starts leaves no r
   await clock.settle()
   opts.fail = false
   expect(state().changed).toContain('R/pages/p1')
-  expect(state().flashOn).toBe(false)
+  expect(state().work).toBeNull()
   await ui.post({ press: 'R/pages/p1' }, { in: 'rows' })
   await clock.settle()
   expect(state().selected).toBe('R/pages/p1')
@@ -905,4 +911,98 @@ test('/report-pane takes a report path with spaces, quoted or not', { timeoutMs:
   expect(plain).toContain('KPI Cards')
   const quoted = JSON.stringify(await $.command.run({ command: PANE, args: '"My Sales.Report"', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any))
   expect(quoted).toContain('My Sales')
+})
+
+test('a theme draws a paint palette in the brand and Nerd Font tiers', async () => {
+  const nodes = await loadReport(ioOf(pbirFiles()), DIR)
+  const theme = nodes.find(n => n.kind === 'theme')
+  expect(theme).toBeDefined()
+  expect(glyph(theme!, 'fabric').char).toBe('\u{f03d8}')
+  expect(glyph(theme!, 'nerd').char).toBe('\u{f03d8}')
+})
+
+const segsOf = (client: any): any[] => (client?.props.props.rows ?? []).flatMap((r: any) => [...r.left, ...r.right])
+
+function clockOf(tree: any): { working: string; shimmer: string[]; lit: string[] } {
+  const working = findKey(tree, 'working')?.props.props.rows[0].left[0]?.sh ?? ''
+  const shimmer = [...new Set([...segsOf(findKey(tree, 'head')), ...segsOf(findKey(tree, 'rows'))].map(seg => seg.sh).filter(Boolean))]
+  const lit = (findKey(tree, 'rows')?.props.props.rows ?? []).filter((r: any) => r.left.some((seg: any) => seg.sh)).map((r: any) => r.id)
+  return { working, shimmer, lit }
+}
+
+test('the working text and the row shimmer start with the command, stop when the flash after it ends, share one tone, and a new command restarts them', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const opts: World = {}
+  const clock = world(on, { HOME: '/home/k' }, ran, opts)
+  const ui = await mount($, clock, 'terminal', { kind: 'local', path: '/work/Sales.Report' })
+  const samples: { at: string; working: string; shimmer: string[]; lit: string[] }[] = []
+  const sample = async (at: string) => samples.push({ at, ...clockOf(await drawn(ui)) })
+  opts.tool = async e => {
+    await sample(`during ${e.command}`)
+    return undefined
+  }
+  await $.tool.call({ tool: 'Bash', command: 'pbir set Sales.Report/Page03.Page --display-name X' } as any)
+  await clock.advance(50)
+  await sample('flash after set')
+  await clock.advance(1000)
+  await $.tool.call({ tool: 'Bash', command: 'pbir get Sales.Report/Page05.Page' } as any)
+  await clock.advance(50)
+  await sample('flash after get')
+  await clock.advance(3000)
+  await clock.settle()
+  await sample('after the flash')
+  await $.tool.call({ tool: 'Bash', command: 'pbir ls Sales.Report' } as any)
+  await clock.settle()
+  await sample('after a command that lit no rows')
+  for (const s of samples) {
+    expect({ at: s.at, both: Boolean(s.working) === s.shimmer.length > 0 }).toEqual({ at: s.at, both: true })
+    expect({ at: s.at, tones: s.shimmer }).toEqual({ at: s.at, tones: s.working ? [s.working] : [] })
+  }
+  expect(samples.map(s => s.working)).toEqual(['orange', 'orange', 'purple', 'purple', '', 'purple', ''])
+  expect(samples.map(s => s.lit)).toEqual([['T:3'], ['T:3'], ['T:5'], ['T:5'], [], [], []])
+  await ui.unmount()
+})
+
+const VISUAL_TYPES = [
+  'barChart', 'clusteredBarChart', 'hundredPercentStackedBarChart', 'columnChart', 'clusteredColumnChart', 'hundredPercentStackedColumnChart',
+  'lineChart', 'areaChart', 'stackedAreaChart', 'hundredPercentStackedAreaChart', 'lineStackedColumnComboChart', 'lineClusteredColumnComboChart',
+  'ribbonChart', 'waterfallChart', 'funnel', 'scatterChart', 'pieChart', 'donutChart', 'treemap', 'map', 'filledMap', 'azureMap', 'shapeMap',
+  'gauge', 'card', 'cardVisual', 'multiRowCard', 'animatedNumber', 'kpi', 'scorecard', 'slicer', 'listSlicer', 'textSlicer', 'advancedSlicerVisual',
+  'filterSlicer', 'table', 'tableEx', 'accessibleTable', 'matrix', 'pivotTable', 'heatMap', 'textbox', 'image', 'shape', 'basicShape',
+  'actionButton', 'pageNavigator', 'bookmarkNavigator', 'decompositionTreeVisual', 'keyDriversVisual', 'qnaVisual', 'aiNarratives', 'rdlVisual',
+  'scriptVisual', 'pythonVisual', 'dataQueryVisual', 'debugVisual', 'group',
+]
+const SAME_VISUAL: Record<string, string> = { stackedBarChart: 'barChart', stackedColumnChart: 'columnChart', keyInfluencers: 'keyDriversVisual', groupVisual: 'group' }
+const PUA = /[\u{e000}-\u{f8ff}\u{f0000}-\u{fffff}]/u
+
+test('every Power BI visual type draws its own glyph in the brand, Nerd Font and plain tiers, and plain draws nothing private-use', () => {
+  const visual = (type: string, title = '') => ({ id: type, parent: '', kind: 'visual', name: title || type, path: '', hidden: false, sig: '', note: title ? type : '' })
+  const unknown = { fabric: glyph(visual('someCustomVisual1234'), 'fabric').char, nerd: glyph(visual('someCustomVisual1234'), 'nerd').char, plain: glyph(visual('someCustomVisual1234'), 'plain').char }
+  for (const tier of ['fabric', 'nerd', 'plain'] as Tier[]) {
+    const chars = VISUAL_TYPES.map(type => glyph(visual(type), tier).char)
+    expect({ tier, distinct: new Set(chars).size }).toEqual({ tier, distinct: VISUAL_TYPES.length })
+    for (const [i, type] of VISUAL_TYPES.entries()) {
+      const char = chars[i] ?? ''
+      expect({ type, tier, fallback: char === unknown[tier as keyof typeof unknown] }).toEqual({ type, tier, fallback: false })
+      expect({ type, tier, single: [...char].length }).toEqual({ type, tier, single: 1 })
+      expect(glyph(visual(type, 'Sales by region'), tier).char).toBe(char)
+      const cp = char.codePointAt(0) ?? 0
+      if (tier === 'fabric') expect({ type, brand: cp >= 0xf2000 && cp <= 0xf28ff }).toEqual({ type, brand: true })
+      if (tier === 'nerd') expect({ type, md: cp >= 0xf0001 && cp <= 0xf1af0 }).toEqual({ type, md: true })
+      if (tier === 'plain') expect({ type, pua: PUA.test(char) }).toEqual({ type, pua: false })
+    }
+    for (const [alias, type] of Object.entries(SAME_VISUAL)) expect(glyph(visual(alias), tier).char).toBe(glyph(visual(type), tier).char)
+  }
+  expect(glyph(visual('clusteredColumnChart'), 'fabric').char).toBe(String.fromCodePoint(0xf2804))
+  expect(glyph(visual('clusteredColumnChart'), 'nerd').char).toBe('\u{f0128}')
+})
+
+test('a custom visual shows its name as the label and a puzzle piece as its glyph', () => {
+  const deneb = 'deneb7E15AEF80B9E4D4F8E12924291ECE89A'
+  expect(visualLabel(deneb)).toBe('Deneb, custom visual')
+  expect(visualLabel('areaChart')).toBe('areaChart')
+  const n = { id: 'v', parent: 'p', kind: 'visual', name: 'Box plot', note: deneb, path: '', sig: '' } as any
+  expect(glyph(n, 'nerd').char).toBe('\u{f0431}')
+  expect(glyph(n, 'fabric').char).toBe('\u{f0431}')
+  expect(glyph(n, 'plain').char).toBe('⧈')
 })

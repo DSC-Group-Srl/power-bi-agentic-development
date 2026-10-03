@@ -13,12 +13,12 @@ export function empty(): Explorer {
     detail: [],
     status: '',
     flash: [],
-    flashOn: false,
-    flashTones: {},
+    work: null,
     busy: {},
     flashDim: [],
     scroll: null,
     root: '',
+    setup: null,
   }
 }
 

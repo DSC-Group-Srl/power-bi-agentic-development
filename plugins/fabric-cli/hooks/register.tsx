@@ -5,8 +5,9 @@ import { glyph, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
-import { FAB_TONE, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
+import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
+import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './setup'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
 const NODES = { plugin: 'fabric-cli', key: 'nodes' } as const
@@ -50,6 +51,7 @@ let fellBack = false
 let follow = true
 let blink: Timer | null = null
 let generation = 0
+let running = 0
 let closed = false
 let noDock = false
 let inflight: Promise<void> | null = null
@@ -261,49 +263,38 @@ function refresh($: EngineInterface): Promise<void> {
   return inflight
 }
 
-async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], tone = 'orange'): Promise<void> {
+async function flash($: EngineInterface, ids: string[], alsoLit: string[] = []): Promise<void> {
   const unique = [...new Set(ids)]
   if (unique.length === 0) return
-  const mine = ++generation
-  blink?.cancel()
-  blink = null
   const ex = await get($)
   await patch($, cur => {
     const byId = new Map(cur.nodes.map(n => [n.id, n]))
     const open = new Set(cur.expanded)
-    const bright = new Set([...(cur.flashOn ? cur.flash.filter(id => !unique.includes(id)) : []), ...unique])
-    const dim = new Set(alsoLit)
-    const tones: Record<string, string> = cur.flashOn ? { ...cur.flashTones } : {}
-    if (cur.flashOn) {
-      for (const id of cur.flashDim) dim.add(id)
-    }
-    for (const id of [...unique, ...alsoLit]) tones[id] = tone
+    const bright = new Set([...cur.flash.filter(id => !unique.includes(id)), ...unique])
+    const dim = new Set([...cur.flashDim, ...alsoLit])
     for (const id of unique) {
       const chain = ancestors(cur.nodes, id, byId)
       if (!chain.some(a => !open.has(a))) continue
       for (const a of chain) {
-        if (!open.has(a)) {
-          dim.add(a)
-          tones[a] ??= tone
-        }
+        if (!open.has(a)) dim.add(a)
         open.add(a)
       }
     }
     for (const id of bright) dim.delete(id)
     const root = rootOf(cur)
     const away = follow && root !== '' && unique.some(id => id !== root && !ancestors(cur.nodes, id, byId).includes(root))
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
-  })
-  if (generation !== mine) return
-  blink = $.clock.after(FLASH_MS, () => {
-    if (generation !== mine) return
-    blink = null
-    quiet(patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
+    return { flash: [...bright], flashDim: [...dim], expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
   })
   if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
 }
 
 type Mark = { ids: string[]; tone: string }
+
+const STRENGTH: FabKind[] = ['read', 'download', 'upload', 'modify']
+
+function toneOf(kinds: FabKind[]): string {
+  return FAB_TONE[STRENGTH.reduce<FabKind>((best, k) => (kinds.includes(k) ? k : best), 'read')]
+}
 
 function rootOf(ex: Explorer): string {
   return ex.root && ex.nodes.some(n => n.id === ex.root) ? ex.root : ''
@@ -317,29 +308,41 @@ function anchored(cur: Explorer, next: Explorer): Explorer {
 }
 
 
-async function markBusy($: EngineInterface, marks: Mark[]): Promise<void> {
-  if (marks.every(m => m.ids.length === 0)) return
+async function begin($: EngineInterface, mark: Mark): Promise<void> {
+  running++
+  generation++
+  blink?.cancel()
+  blink = null
   const at = await $.clock.now()
   await patchView($, cur => {
     const map = { ...cur.busy }
-    for (const { ids, tone } of marks) for (const id of ids) map[id] = { tone, n: (map[id]?.n ?? 0) + 1, at }
-    return { busy: map }
+    for (const id of mark.ids) map[id] = { tone: mark.tone, n: (map[id]?.n ?? 0) + 1, at }
+    return { busy: map, work: { tone: mark.tone, at }, flash: [], flashDim: [] }
   })
 }
 
-async function clearBusy($: EngineInterface, marks: Mark[]): Promise<void> {
-  if (marks.every(m => m.ids.length === 0)) return
+async function finish($: EngineInterface, mark: Mark): Promise<void> {
+  running = Math.max(0, running - 1)
+  const mine = generation
+  const idle = running === 0
+  let lit = false
   await patchView($, cur => {
     const map = { ...cur.busy }
-    for (const { ids } of marks) {
-      for (const id of ids) {
-        const left = (map[id]?.n ?? 1) - 1
-        const entry = map[id]
-        if (left > 0 && entry) map[id] = { ...entry, n: left }
-        else delete map[id]
-      }
+    for (const id of mark.ids) {
+      const left = (map[id]?.n ?? 1) - 1
+      const entry = map[id]
+      if (left > 0 && entry) map[id] = { ...entry, n: left }
+      else delete map[id]
     }
-    return { busy: map }
+    lit = cur.flash.length > 0 || cur.flashDim.length > 0
+    return { busy: map, ...(idle && generation === mine && !lit ? { work: null } : {}) }
+  })
+  if (!idle || !lit || generation !== mine) return
+  blink?.cancel()
+  blink = $.clock.after(FLASH_MS, () => {
+    if (generation !== mine || running > 0) return
+    blink = null
+    quiet(patchView($, () => (generation === mine && running === 0 ? { work: null, flash: [], flashDim: [] } : {})))
   })
 }
 
@@ -422,8 +425,10 @@ async function fabLs($: EngineInterface, path?: string): Promise<string> {
       timeoutMs: 60_000,
       ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}),
     }),
-  )
-  if (run.exitCode !== 0) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || 'fab ls failed')
+  ).catch((err: unknown) => {
+    throw spawnFailure(err, ctx.bin)
+  })
+  if (run.exitCode !== 0) throw runFailure(run, 'fab ls failed')
   if (run.isStdoutTruncated) throw new Error(`fab ls ${where}: too much output to show`)
   return run.stdout
 }
@@ -542,10 +547,11 @@ async function relistRoot($: EngineInterface): Promise<void> {
   if (!target) return
   try {
     const kids = parseWorkspaces(await fabLs($))
-    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: grouped(merge(grouped(cur.nodes, false), '', kids), cur.byDomain !== false) } : {}))
+    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: grouped(merge(grouped(cur.nodes, false), '', kids), cur.byDomain !== false), setup: null } : {}))
   } catch (err) {
     statusOwner = ''
-    await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+    const setup = setupOf(err)
+    await patchView($, cur => (sameTarget(cur.target, target) ? { status: setup ? '' : errorText(err), setup } : {}))
   }
 }
 
@@ -558,10 +564,11 @@ async function doRefresh($: EngineInterface): Promise<void> {
     const byDomain = (await get($)).byDomain !== false
     const [listing] = await Promise.all([fabLs($), byDomain ? loadDomains($) : Promise.resolve()])
     const nodes = grouped(parseWorkspaces(listing), byDomain)
-    await patch($, cur => (sameTarget(cur.target, target) ? { nodes, expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
+    await patch($, cur => (sameTarget(cur.target, target) ? { nodes, expanded: cur.nodes.length ? cur.expanded : [], status: '', setup: null } : {}))
     await expandOpen($)
   } catch (err) {
-    await patch($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+    const setup = setupOf(err)
+    await patch($, cur => (sameTarget(cur.target, target) ? { status: setup ? '' : errorText(err), setup } : {}))
   }
 }
 
@@ -702,7 +709,8 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
   fabContext = contextOf(head)
   const identity = identityOf(head.env)
   const moved = await point($, identity ? { kind: 'fabric', identity } : { kind: 'fabric' }, 'unasked')
-  const fresh0 = moved || (await get($)).nodes.length === 0
+  const start = await get($)
+  const fresh0 = moved || start.nodes.length === 0 || start.setup !== null
   if (fresh0) await refresh($)
   const prior = await get($)
   const before = new Set(prior.expanded)
@@ -741,17 +749,14 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
   for (const a of lower(calls.flatMap(inv => inv.args.slice(1).filter(x => /\.Workspace\//i.test(x))))) await revealPath($, a)
   if (!succeeded) return
   const fresh = await get($)
-  const byTone = new Map<string, { touched: string[]; opened: string[] }>()
+  const lit = { touched: [] as string[], opened: [] as string[] }
   for (const inv of calls) {
     const touched = fabTouched(inv, fresh.nodes)
     const opened = touched.length ? fabWorkspaces(inv).map(w => wsId(fresh.nodes, w)).filter(id => !before.has(id)) : []
-    const tone = FAB_TONE[fabKind(inv)]
-    const group = byTone.get(tone) ?? { touched: [], opened: [] }
-    group.touched.push(...touched)
-    group.opened.push(...opened)
-    byTone.set(tone, group)
+    lit.touched.push(...touched)
+    lit.opened.push(...opened)
   }
-  for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
+  await flash($, lit.touched, lit.opened)
 }
 
 function byGuid(guids: string[], nodes: TreeNode[]): string[] {
@@ -796,7 +801,7 @@ async function afterQueries($: EngineInterface, asked: { ids: string[]; workspac
   await pool(asked.workspaces, w => reveal($, w))
   const fresh = await get($)
   const ids = [...new Set([...asked.ids, ...fresh.nodes.filter(n => asked.models.includes(n.path.toLowerCase())).map(n => n.id)])]
-  await flash($, ids, [], FAB_TONE.read)
+  await flash($, ids)
 }
 
 function wholeArg(args: string | undefined): string {
@@ -814,7 +819,11 @@ export const register: Register = (on, options) => {
     hinted = false
     fellBack = false
     quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
-    await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
+    running = 0
+    generation++
+    blink?.cancel()
+    blink = null
+    await patchView($, () => ({ flash: [], flashDim: [], work: null, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Fabric pane; args: [workspace]' })
     const ex = await get($)
     if (ex.target) quiet(openPane($, { id: PANE, title: titleFor(ex.target) }))
@@ -846,25 +855,28 @@ export const register: Register = (on, options) => {
     if (closed || noDock) return next(e)
     const ex = await get($)
     const asked = await queryNodes($, queries, ex.nodes)
-    const marks: Mark[] = [
-      ...calls.map(inv => ({ ids: [HEADER, ...fabWorkspaces(inv).map(w => wsId(ex.nodes, w)), ...fabTouched(inv, ex.nodes), ...byGuid(fabGuids(inv), ex.nodes)], tone: FAB_TONE[fabKind(inv)] })),
-      ...(queries.length ? [{ ids: [HEADER, ...asked.ids], tone: FAB_TONE.read }] : []),
-    ]
-    await markBusy($, marks)
+    const mark: Mark = {
+      ids: [HEADER, ...calls.flatMap(inv => [...fabWorkspaces(inv).map(w => wsId(ex.nodes, w)), ...fabTouched(inv, ex.nodes), ...byGuid(fabGuids(inv), ex.nodes)]), ...asked.ids],
+      tone: toneOf([...calls.map(fabKind), ...(queries.length ? (['read'] as FabKind[]) : [])]),
+    }
+    await begin($, mark)
     let result: Awaited<ReturnType<typeof next>>
     try {
       result = await next(e)
     } catch (err) {
-      await clearBusy($, marks)
+      await finish($, mark)
       throw err
     }
     const task = result.deny ? '' : backgroundOf(result.result)
     const stale = new Set(loading.keys())
     const settle = async () => {
-      await clearBusy($, marks)
-      if (result.deny || closed || noDock) return
-      if (calls.length) await afterFab($, calls, stale, !result.isError)
-      if (queries.length && !result.isError) await afterQueries($, asked)
+      try {
+        if (result.deny || closed || noDock) return
+        if (calls.length) await afterFab($, calls, stale, !result.isError)
+        if (queries.length && !result.isError) await afterQueries($, asked)
+      } finally {
+        await finish($, mark)
+      }
     }
     if (task) waiting.set(task, settle)
     else void settle().catch(() => undefined)
@@ -878,6 +890,13 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.message', async ($, e, next) => {
+    if (e.requestId === PANE && e.element === 'setup' && e.data && typeof e.data === 'object') {
+      const data = e.data as { press?: unknown; tab?: unknown; copy?: unknown }
+      const pick = [data.tab, data.press, data.copy].find((v): v is string => typeof v === 'string') ?? ''
+      if (pick === REFRESH) quiet(refresh($))
+      else if (pick.startsWith(COPY)) await copyOf($, pick.slice(COPY.length), e.surface)
+      return {}
+    }
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
     const view = views.get(e.surface) ?? { from: 0, max: 0 }
     const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
@@ -965,16 +984,17 @@ export const register: Register = (on, options) => {
       const b = ex.busy[id]
       return b && now - b.at < BUSY_MAX_MS ? b.tone : ''
     }
-    const brightSet = new Set(ex.flashOn ? ex.flash : [])
-    const dimSet = new Set(ex.flashOn ? ex.flashDim : [])
+    const work = ex.work && now - ex.work.at < BUSY_MAX_MS ? ex.work : null
+    const brightSet = new Set(work ? ex.flash : [])
+    const dimSet = new Set(work ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
     const rows = visible(ex, SORT, rootOf(ex))
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
-    const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
+    const focusId = follow && work && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
-    const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && work ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === ex.cursor)) - Math.floor(room / 2), rows.length - room))
     const inView = lit >= base && at < base + room
@@ -1005,12 +1025,12 @@ export const register: Register = (on, options) => {
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
       const note = n.note ? ` ${n.note}` : ''
       const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
-      const isBright = brightSet.has(n.id)
+      const busy = busyTone(n.id)
+      const isBright = brightSet.has(n.id) || (work !== null && busy !== '')
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
       const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
-      const tone = ex.flashTones[n.id] ?? 'orange'
-      const busy = busyTone(n.id)
+      const tone = work?.tone ?? 'orange'
       const left: Seg[] = [
         { t: '  '.repeat(r.depth) },
         { t: arrow, c: '#7a7a86' },
@@ -1059,8 +1079,8 @@ export const register: Register = (on, options) => {
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
-            {busyTone(HEADER) && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: busyTone(HEADER) }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            {work && !ex.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
             ) : (
             <Input
               key="q"
@@ -1076,12 +1096,16 @@ export const register: Register = (on, options) => {
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
-        {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+        {!ex.setup && ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
+        {ex.setup ? (
+          <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+        ) : (
+          <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+        )}
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text key={i} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
+              <Text key={String(i)} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
                 {l.replace(/\s+/g, ' ')}
               </Text>
             ))}

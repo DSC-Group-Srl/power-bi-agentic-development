@@ -1,7 +1,7 @@
 import { type EngineInterface, type Register, type Timer, update } from 'claude-code'
 
 import type { Explorer, Target, TreeNode } from '../types'
-import { glyph, type Tier } from './icons'
+import { glyph, type Tier, visualLabel } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, diff, empty, visible } from './tree'
 import { idOf, reportUrl, workspaceUrl } from './fabric'
@@ -18,7 +18,6 @@ const TITLE_COLOR = '#fbbf24'
 const HINT = 'waiting for a pbir command, or /report-pane <path.Report>'
 const WINDOW = 400
 const DETAIL_ROWS = 12
-const HEADER = '#header'
 const BUSY_MAX_MS = 600_000
 const FLASH_MS = 2700
 const DOUBLE_MS = 450
@@ -53,7 +52,7 @@ let fellBack = false
 let follow = true
 let pbirBin = 'pbir'
 let blink: Timer | null = null
-let generation = 0
+let runs = 0
 let closed = false
 let noDock = false
 let inflight: Promise<void> | null = null
@@ -229,49 +228,54 @@ function refresh($: EngineInterface): Promise<void> {
   return inflight
 }
 
-async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], tone = 'orange'): Promise<void> {
+async function light($: EngineInterface, ids: string[], tone: string, running: boolean, run = ''): Promise<string> {
   const unique = [...new Set(ids)]
-  if (unique.length === 0) return
-  const mine = ++generation
+  const ex = await get($)
+  if (run && ex.work && ex.work.run !== run) return ''
+  if (!running && unique.length === 0) {
+    if (run) await settle($, run)
+    return ''
+  }
+  const mine = run || `${++runs}`
   blink?.cancel()
   blink = null
-  const ex = await get($)
+  const at = await $.clock.now()
   const nodes = await nodesOf($, ex.target)
+  let kept = false
   await patch($, cur => {
+    if (run && cur.work && cur.work.run !== run) return {}
+    kept = true
     const byId = new Map(nodes.map(n => [n.id, n]))
     const open = new Set(cur.expanded)
-    const bright = new Set([...(cur.flashOn ? cur.flash.filter(id => !unique.includes(id)) : []), ...unique])
-    const dim = new Set(alsoLit)
-    const tones: Record<string, string> = cur.flashOn ? { ...cur.flashTones } : {}
-    if (cur.flashOn) {
-      for (const id of cur.flashDim) dim.add(id)
-    }
-    for (const id of [...unique, ...alsoLit]) tones[id] = tone
+    const dim = new Set<string>()
     for (const id of unique) {
       const chain = ancestors(nodes, id, byId)
       if (!chain.some(a => !open.has(a))) continue
       for (const a of chain) {
-        if (!open.has(a)) {
-          dim.add(a)
-          tones[a] ??= tone
-        }
+        if (!open.has(a)) dim.add(a)
         if (follow) open.add(a)
       }
     }
-    for (const id of bright) dim.delete(id)
+    for (const id of unique) dim.delete(id)
     const root = rootOf(cur, nodes)
     const away = follow && root !== '' && unique.some(id => id !== root && !ancestors(nodes, id, byId).includes(root))
     const next: Explorer = { ...cur, expanded: [...open], root: away ? '' : cur.root }
-    const scroll = follow ? heldInView(next, nodes, [...bright, ...dim], unique[unique.length - 1] ?? '') : cur.scroll
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: next.expanded, scroll, ...(away ? { root: '' } : {}) }
+    const scroll = follow ? heldInView(next, nodes, [...unique, ...dim], unique[unique.length - 1] ?? '') : cur.scroll
+    return { work: { run: mine, tone, running, at }, flash: unique, flashDim: [...dim], expanded: next.expanded, scroll, ...(away ? { root: '' } : {}) }
   })
-  if (generation !== mine) return
-  blink = $.clock.after(FLASH_MS, () => {
-    if (generation !== mine) return
-    blink = null
-    quiet(patch($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
-  })
-  if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
+  if (!kept) return ''
+  if (!running) {
+    blink = $.clock.after(FLASH_MS, () => {
+      blink = null
+      quiet(settle($, mine))
+    })
+    if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
+  }
+  return mine
+}
+
+async function settle($: EngineInterface, run: string): Promise<void> {
+  await patch($, cur => (cur.work?.run === run ? { work: null, flash: [], flashDim: [] } : {}))
 }
 
 function rootOf(ex: Explorer, nodes: TreeNode[]): string {
@@ -298,35 +302,6 @@ function anchored(ex: Explorer, before: TreeNode[], after: TreeNode[], expanded:
     out[surface] = at < 0 ? from : at
   }
   return out
-}
-
-let busyRun = 0
-
-async function markBusy($: EngineInterface, ids: string[], tone: string): Promise<string> {
-  const at = await $.clock.now()
-  const run = `${at}-${++busyRun}`
-  if (ids.length === 0) return run
-  await patch($, cur => {
-    const map = { ...cur.busy }
-    for (const id of ids) map[id] = { tone, runs: [...(map[id]?.runs ?? []), run], at }
-    return { busy: map }
-  })
-  return run
-}
-
-async function clearBusy($: EngineInterface, ids: string[], run: string): Promise<void> {
-  if (ids.length === 0) return
-  await patch($, cur => {
-    const map = { ...cur.busy }
-    for (const id of ids) {
-      const entry = map[id]
-      if (!entry?.runs.includes(run)) continue
-      const runs = entry.runs.filter(r => r !== run)
-      if (runs.length) map[id] = { ...entry, runs }
-      else delete map[id]
-    }
-    return { busy: map }
-  })
 }
 
 async function point($: EngineInterface, target: Target | null, opened: 'asked' | 'unasked', fresh = false): Promise<boolean> {
@@ -432,13 +407,15 @@ async function changedUnder($: EngineInterface, dirs: string[], since: Since): P
   }
 }
 
-async function directEdit($: EngineInterface, files: string[]): Promise<void> {
+async function directEdit($: EngineInterface, files: string[], run = ''): Promise<void> {
   const t = (await get($)).target
-  if (files.length === 0 || t?.kind !== 'local') return
-  const root = t.path.replace(/\/$/, '')
-  if (!files.some(f => f === root || f.startsWith(root + '/'))) return
+  const root = t?.kind === 'local' ? t.path.replace(/\/$/, '') : ''
+  if (!root || !files.some(f => f === root || f.startsWith(root + '/'))) {
+    if (run) await settle($, run)
+    return
+  }
   await refresh($)
-  await flash($, (await get($)).changed)
+  await light($, (await get($)).changed, 'orange', false, run)
 }
 
 function toggled(ex: Explorer, nodes: TreeNode[], n: TreeNode): Partial<Explorer> {
@@ -507,7 +484,11 @@ async function doRefresh($: EngineInterface): Promise<void> {
   }
 }
 
-async function followPbir($: EngineInterface, calls: Invocation[]): Promise<void> {
+function toneOf(calls: Invocation[]): string {
+  return calls.some(inv => !readOnlyPbir(inv)) ? 'orange' : 'purple'
+}
+
+async function followPbir($: EngineInterface, calls: Invocation[], run: string): Promise<void> {
   const ran = calls.filter(inv => !inv.maybe)
   for (const inv of ran) pbirBin = binOf(inv.bin, inv.cwd, 'pbir')
   let dirty = false
@@ -521,8 +502,7 @@ async function followPbir($: EngineInterface, calls: Invocation[]): Promise<void
       if (dirty) await refresh($)
       const cur = await get($)
       const nodes = await nodesOf($, cur.target)
-      await flash($, [...(dirty ? cur.changed : []), ...ran.filter(inv => !readOnlyPbir(inv)).flatMap(inv => pbirTouched(inv, nodes))])
-      await flash($, ran.filter(inv => readOnlyPbir(inv)).flatMap(inv => pbirTouched(inv, nodes)), [], 'purple')
+      await light($, [...(dirty ? cur.changed : []), ...ran.flatMap(inv => pbirTouched(inv, nodes))], toneOf(calls), false, run)
     })(),
   )
 }
@@ -572,7 +552,7 @@ export const register: Register = (on, options) => {
     pbirBin = 'pbir'
     lastPress = { key: '', at: 0 }
     quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
-    await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
+    await patch($, () => ({ flash: [], flashDim: [], work: null }))
     await $.command.register({ name: PANE, description: 'Open the Report pane; args: <path to .Report>' })
     const ex = await get($)
     if (ex.target) quiet(openPane($, { id: PANE, title: titleFor(ex.target) }))
@@ -600,30 +580,32 @@ export const register: Register = (on, options) => {
     const calls = invocations(command, await cwdOf($))
     if (calls.length === 0) return next(e)
     const ex = await get($)
-    const marks = calls.map(inv => ({ ids: (() => { const p = pbirReport(inv); return ex.target && (!p || (ex.target.kind === 'local' && ex.target.path === p)) ? [HEADER] : [] })(), tone: readOnlyPbir(inv) ? 'purple' : 'orange' }))
+    const here = calls.filter(inv => {
+      const p = pbirReport(inv)
+      return ex.target && (!p || (ex.target.kind === 'local' && ex.target.path === p))
+    })
+    const nodes = here.length ? await nodesOf($, ex.target) : []
+    const run = here.length ? await light($, here.flatMap(inv => (inv.maybe ? [] : pbirTouched(inv, nodes))), toneOf(calls), true) : ''
     let result: Awaited<ReturnType<typeof next>>
-    const runs: { ids: string[]; run: string }[] = []
-    const settle = async () => {
-      for (const r of runs) await clearBusy($, r.ids, r.run)
-    }
     try {
-      for (const m of marks) runs.push({ ids: m.ids, run: await markBusy($, m.ids, m.tone) })
       result = await next(e)
     } catch (err) {
-      await settle()
+      if (run) await settle($, run)
       throw err
     }
     const task = result.deny || result.isError ? '' : backgroundOf(result.result)
     if (task) {
       afterTask(task, async ok => {
-        await settle()
-        if (ok) await followPbir($, calls)
+        if (ok) await followPbir($, calls, run)
+        else if (run) await settle($, run)
       })
       return result
     }
-    await settle()
-    if (result.deny || result.isError) return result
-    await followPbir($, calls)
+    if (result.deny || result.isError) {
+      if (run) await settle($, run)
+      return result
+    }
+    await followPbir($, calls, run)
     return result
   })
 
@@ -633,25 +615,27 @@ export const register: Register = (on, options) => {
     const viaCli = e.tool === 'Bash' && invocations(command, await cwdOf($)).length > 0
     const t = (await get($)).target
     const watched = e.tool === 'Bash' && !viaCli && t?.kind === 'local' ? [t.path] : []
+    const file = e.tool === 'Bash' ? '' : join(await cwdOf($), e.file_path)
+    const inside = file !== '' && t?.kind === 'local' && file.startsWith(t.path.replace(/\/$/, '') + '/')
+    const run = inside ? await light($, [], 'orange', true) : ''
     const since = await sinceNow($, watched.length > 0)
     let result: Awaited<ReturnType<typeof next>>
     try {
       result = await next(e)
     } catch (err) {
       quiet(dropMark($, since))
+      if (run) await settle($, run)
       throw err
     }
     if (result.deny || result.isError) {
       quiet(dropMark($, since))
+      if (run) await settle($, run)
       return result
     }
-    if (e.tool !== 'Bash') {
-      const file = join(await cwdOf($), e.file_path)
+    if (file) {
       const root = file.match(/^(.*?\.Report)\//)?.[1]
-      const cur = (await get($)).target
-      const inside = cur?.kind === 'local' && file.startsWith(cur.path.replace(/\/$/, '') + '/')
       if (root && !inside) await point($, { kind: 'local', path: root }, 'unasked')
-      quiet(directEdit($, [file]))
+      quiet(directEdit($, [file], run))
     } else if (watched.length) {
       const scan = async () => {
         try {
@@ -761,22 +745,20 @@ export const register: Register = (on, options) => {
     const ex = await get($)
     const nodes = await nodesOf($, ex.target)
     const now = await $.clock.now()
-    const busyTone = (id: string) => {
-      const b = ex.busy[id]
-      return b && now - b.at < BUSY_MAX_MS ? b.tone : ''
-    }
-    const brightSet = new Set(ex.flashOn ? ex.flash : [])
-    const dimSet = new Set(ex.flashOn ? ex.flashDim : [])
+    const work = ex.work && (!ex.work.running || now - ex.work.at < BUSY_MAX_MS) ? ex.work : null
+    const tone = work?.tone ?? ''
+    const brightSet = new Set(work ? ex.flash : [])
+    const dimSet = new Set(work ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
     const rootId = rootOf(ex, nodes)
     const rows = visible(ex, nodes, rootId)
     const changed = new Set(ex.changed)
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
-    const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
+    const focusId = follow && work && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
-    const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && work ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === ex.cursor)) - Math.floor(room / 2), rows.length - room))
     const inView = lit >= base && at < base + room
@@ -806,14 +788,12 @@ export const register: Register = (on, options) => {
       const n = r.node
       const g = glyph(n, tier)
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
-      const note = n.note ? ` ${n.note}` : ''
+      const note = n.note ? ` ${n.kind === 'visual' ? visualLabel(n.note) : n.note}` : ''
       const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
       const isBright = brightSet.has(n.id)
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
       const faded = n.hidden
-      const tone = ex.flashTones[n.id] ?? 'orange'
-      const busy = busyTone(n.id)
       const left: Seg[] = [
         { t: changed.has(n.id) ? '*' : ' ', c: '#e5c07b' },
         { t: '  '.repeat(r.depth) },
@@ -821,7 +801,6 @@ export const register: Register = (on, options) => {
         isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? '#6e6e7a' : g.color },
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
-      if (busy) left.push(spin(busy))
       return { id: n.id, left: clean(left), right: note ? [{ t: note, c: '#6e6e7a' }] : [] }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
@@ -837,10 +816,10 @@ export const register: Register = (on, options) => {
       id: '',
       left: clean([
         { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
-        { t: rootNode ? rootNode.name : ex.target ? targetLabel(ex.target) : TITLE, b: true },
+        { t: rootNode ? rootNode.name : ex.target ? targetLabel(ex.target) : TITLE, b: true, ...(work ? { sh: tone } : {}) },
         ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
         ...(ex.changed.length ? [{ t: `  ${ex.changed.length} changed`, c: '#e5c07b' }] : []),
-        ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
+        ...(work?.running ? [spin(tone)] : []),
       ]),
       right: [],
     }
@@ -862,8 +841,8 @@ export const register: Register = (on, options) => {
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
-            {busyTone(HEADER) && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Power BI...', sh: busyTone(HEADER) }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            {work && !ex.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Power BI...', sh: tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
             ) : (
               <Input
                 key="q"

@@ -49,7 +49,7 @@ export type FileTree = {
   flashTones: Record<string, string>
   scroll: number | null
   top: string
-  busy: { tone: string; n: number; at: number } | null
+  work: { tone: string; n: number; at: number; until: number; lit: string[]; dim: string[] } | null
 }
 
 export type Theme = {

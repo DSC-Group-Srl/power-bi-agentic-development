@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { decoded, tokenize } from '../hooks/parse'
+import { runFailure, spawnFailure } from '../hooks/setup'
 
 type Ran = string[][]
 const opens: unknown[] = []
@@ -26,6 +27,7 @@ let domainsOn = false
 let paged = false
 const DOM = '11111111-2222-4333-8444-555555555555'
 const toasts: string[] = []
+let fabFail: ((argv: string[]) => unknown) | null = null
 
 function world(on: any, env: Record<string, string>, ran: Ran) {
   mock.env(on, env)
@@ -62,6 +64,10 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
   on('process.run', (_$: any, e: any) => {
     const argv: string[] = [...e.argv]
     ran.push(argv)
+    if (argv[0] === 'fab' && fabFail) {
+      const failed = fabFail(argv)
+      if (failed) return failed
+    }
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (argv[0] === 'uname') return ok(env.OS ? '' : env.HOME?.startsWith('/Users') ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
@@ -748,9 +754,8 @@ test('fontHint off keeps the font hint out of prompts', { timeoutMs: 20_000, opt
 
 test('a plain glyphs setting is a choice, not a fallback, so no font hint', { timeoutMs: 20_000, options: { glyphs: 'plain' } } as any, async ($: any, on: any) => {
   const ran: Ran = []
-  const copied: string[] = []
-  const w: any = world(on, { HOME: '/home/k' }, ran, copied)
-  const ui = await open($, w.clock ?? w, 'terminal')
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
   expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('fabric-nf')
   await ui.unmount()
 })
@@ -827,4 +832,199 @@ test('command -v fab only looks the CLI up, so the pane does not say Claude is w
   onTool = null
   expect(drawn).not.toContain('Claude is working in Fabric')
   await ui.unmount()
+})
+
+const clientOf = (n: any, key: string): any => (n?.type === 'Client' && n.props?.key === key ? n : (n?.children ?? []).map((c: any) => clientOf(c, key)).find(Boolean))
+
+async function workSample(ui: any) {
+  await ui.redraw()
+  const drawn = await ui.drawn()
+  const working = clientOf(drawn, 'working')?.props.props.rows[0]?.left[0]
+  const rows = clientOf(drawn, 'rows')?.props.props.rows ?? []
+  const shimmer = [...new Set(rows.flatMap((r: any) => [...r.left, ...r.right].filter((x: any) => x.sh).map((x: any) => x.sh)))]
+  return { text: working?.t === 'Claude is working in Fabric...' ? String(working.sh) : '', shimmer }
+}
+
+test('the working text and the row shimmer share one clock: on while the command runs, on through the flash, off together, and a new command restarts them in its tone', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  const samples: { at: string; text: string; shimmer: unknown[] }[] = []
+  const take = async (at: string) => {
+    samples.push({ at, ...(await workSample(ui)) })
+  }
+  onTool = () => take('purple command')
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS00.Workspace/Sales.SemanticModel" -q definition' } as any)
+  await clock.advance(50)
+  await take('purple flash')
+  onTool = () => take('teal command')
+  await $.tool.call({ tool: 'Bash', command: 'fab export "WS00.Workspace/Sales.Report" -o ./out -f' } as any)
+  await clock.advance(50)
+  await take('teal flash')
+  await clock.advance(3000)
+  await take('after flash')
+  toolResult = { result: { stdout: '', stderr: 'boom' }, isError: true }
+  onTool = () => take('failing command')
+  await $.tool.call({ tool: 'Bash', command: 'fab set "WS00.Workspace/Sales.Report" -q description -i x -f' } as any)
+  onTool = null
+  toolResult = null
+  await clock.advance(50)
+  await take('after failing command')
+  expect(samples.map(x => `${x.at}: ${x.text || 'none'} / ${x.shimmer.join(',') || 'none'}`)).toEqual([
+    'purple command: purple / purple',
+    'purple flash: purple / purple',
+    'teal command: teal / teal',
+    'teal flash: teal / teal',
+    'after flash: none / none',
+    'failing command: orange / orange',
+    'after failing command: none / none',
+  ])
+  await ui.unmount()
+})
+
+const ICON = '<icon> '
+const COPY_MISSING = [
+  '<icon> Fabric CLI not found',
+  'This pane needs the Fabric CLI (fab).',
+  '',
+  '<icon> Install it',
+  'uv tool install ms-fabric-cli',
+  'No uv yet? brew install uv or winget install uv',
+  '',
+  '<icon> Then sign in',
+  'fab auth login',
+  '',
+  "Press ↻ when you're done. Or ask Claude to set it up for you.",
+]
+const COPY_SIGNED_OUT = ['<icon> Not signed in to Fabric', 'fab auth login', '', "Press ↻ when you're done. To check which account you use: fab auth status"]
+const NET_ERROR = "An unexpected error occurred: HTTPSConnectionPool(host='api.fabric.microsoft.com', port=443): Read timed out"
+const COPY_UNREACHABLE = ["<icon> Can't reach Fabric", NET_ERROR, 'Check your network or proxy, then press ↻.']
+
+const fabJson = (message: string, code: string) => JSON.stringify({ timestamp: '2026-01-01T00:00:00Z', status: 'Failure', command: 'ls', result: { message, error_code: code } }, null, 4)
+const fabFailure = (exitCode: number, message: string, code: string) => ({ value: { exitCode, stdout: fabJson(message, code), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+
+async function openWide($: any, clock: any, columns = 120) {
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.command.run({ command: PANE, args: '', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...paneProps(40), bodyColumns: columns } })
+  await clock.settle()
+  return ui
+}
+
+async function setupLines(ui: any, expected: string[]) {
+  const all = clientOf(await ui.drawn(), 'setup')?.props.props.rows
+  if (!all) return { rows: undefined, lines: [] as string[] }
+  const text = (r: any) => r.left.map((x: any) => x.t).join('').trim()
+  expect(text(all[0])).toBe('')
+  const rows = all.slice(1).map((r: any) => ({ ...r, left: r.left.filter((x: any, i: number) => i > 0 || x.t.trim()) }))
+  const lines = rows.map((r: any) => r.left.map((x: any) => x.t).join('').trim())
+  return { rows, lines: lines.map((l: string, i: number) => (expected[i]?.startsWith(ICON) ? l.replace(/^\S+ /, ICON) : l)) }
+}
+
+test('onboarding: a missing fab shows the install steps word for word, commands copy on click, and it goes away once Claude gets fab listing', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock, copied } = world(on, { HOME: '/home/k' }, ran)
+  fabFail = () => ({ deny: 'spawn fab ENOENT' })
+  const ui = await openWide($, clock)
+  const { rows, lines } = await setupLines(ui, COPY_MISSING)
+  expect(lines).toEqual(COPY_MISSING)
+  expect(clientOf(await ui.drawn(), 'rows')).toBeUndefined()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('nothing loaded yet')
+  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  const install = rows.find((r: any) => r.id === 'copy:uv tool install ms-fabric-cli')
+  expect(install.left.map((x: any) => x.c)).toEqual(['#7dd3fc'])
+  expect(rows[0].left[1].b).toBe(true)
+  await ui.post({ press: 'copy:uv tool install ms-fabric-cli' }, { in: 'setup' })
+  await ui.post({ tab: 'copy:brew install uv' }, { in: 'setup' })
+  await clock.settle()
+  expect(copied).toEqual(['uv tool install ms-fabric-cli', 'brew install uv'])
+  expect(toasts.at(-1)).toBe('Copied brew install uv')
+  fabFail = null
+  await $.tool.call({ tool: 'Bash', command: 'fab ls "WS00.Workspace"' } as any)
+  await clock.settle()
+  expect(clientOf(await ui.drawn(), 'setup')).toBeUndefined()
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).toContain('W:WS00')
+  await ui.unmount()
+})
+
+test('onboarding: signed out shows the sign-in copy word for word with Nerd glyphs, and pressing refresh after signing in brings the workspaces back', { timeoutMs: 20_000, options: { glyphs: 'nerd' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const { clock, copied } = world(on, { HOME: '/home/k' }, ran)
+  fabFail = argv => (argv[1] === 'ls' ? fabFailure(1, 'Failed to get access token', 'AuthenticationFailed') : null)
+  const ui = await openWide($, clock)
+  const { rows, lines } = await setupLines(ui, COPY_SIGNED_OUT)
+  expect(lines).toEqual(COPY_SIGNED_OUT)
+  expect(rows[0].left[0].t).toMatch(NERD)
+  expect(JSON.stringify(await ui.drawn())).not.toContain('error:')
+  await ui.post({ tab: 'copy:fab auth status' }, { in: 'setup' })
+  await clock.settle()
+  expect(copied).toEqual(['fab auth status'])
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect((await setupLines(ui, COPY_SIGNED_OUT)).lines).toEqual(COPY_SIGNED_OUT)
+  fabFail = null
+  await ui.post({ tab: 'refresh' }, { in: 'setup' })
+  await clock.settle()
+  expect(clientOf(await ui.drawn(), 'setup')).toBeUndefined()
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).toContain('W:WS00')
+  await ui.unmount()
+})
+
+test('onboarding: an unreachable service shows the first line of the CLI error, wraps in a narrow pane, and clears on refresh', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  fabFail = argv => (argv[1] === 'ls' ? fabFailure(1, NET_ERROR, 'UnexpectedError') : null)
+  const ui = await openWide($, clock)
+  expect((await setupLines(ui, COPY_UNREACHABLE)).lines).toEqual(COPY_UNREACHABLE)
+  await ui.unmount()
+  const narrow = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...paneProps(40), bodyColumns: 30 } })
+  await clock.settle()
+  const rows = clientOf(await narrow.drawn(), 'setup')?.props.props.rows ?? []
+  const texts = rows.map((r: any) => r.left.map((x: any) => x.t).join(''))
+  expect(texts.every((t: string) => [...t.trimEnd()].length <= 30)).toBe(true)
+  expect(texts.join(' ').replace(/\s+/g, ' ')).toContain('Check your network or proxy, then press ↻.')
+  fabFail = null
+  await narrow.press({ key: 'refresh' })
+  await clock.settle()
+  expect(clientOf(await narrow.drawn(), 'setup')).toBeUndefined()
+  expect((await rowsOf(narrow)).rows.map((r: any) => r.id)).toContain('W:WS00')
+  await narrow.unmount()
+})
+
+test('onboarding: any other listing failure keeps the error line and the tree view', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  fabFail = argv => (argv[1] === 'ls' && argv[2] === '/' ? fabFailure(1, 'Access is forbidden. You do not have permission to access this resource', 'Forbidden') : null)
+  const ui = await openWide($, clock)
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('error: Access is forbidden. You do not have permission to access this resource')
+  expect(clientOf(await ui.drawn(), 'setup')).toBeUndefined()
+  expect(clientOf(await ui.drawn(), 'rows')).toBeDefined()
+  fabFail = null
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('error:')
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).toContain('W:WS00')
+  await ui.unmount()
+})
+
+test('fab failures classify as missing, signed out, unreachable or other', { timeoutMs: 5_000 }, async () => {
+  const run = (exitCode: number, stdout: string, stderr = '') => runFailure({ exitCode, stdout, stderr }, 'fab ls failed').kind
+  expect(spawnFailure(new Error('spawn fab ENOENT'), 'fab').kind).toBe('missing')
+  expect(spawnFailure(new Error('command timed out after 60000 ms'), 'fab').kind).toBe('unreachable')
+  expect(run(127, '', 'sh: fab: command not found')).toBe('missing')
+  expect(run(4, fabJson('Access is unauthorized', 'Unauthorized'))).toBe('signed-out')
+  expect(run(1, fabJson('Failed to get access token', 'AuthenticationFailed'))).toBe('signed-out')
+  expect(run(1, fabJson('Failed to get access token: Something went wrong while trying to acquire a token. Please try to run `fab auth logout` and then `fab auth login` to re-login and acquire new tokens', 'AuthenticationFailed'))).toBe('signed-out')
+  expect(run(1, fabJson('Authentication credential is missing. Either FAB_SPN_CLIENT_SECRET, FAB_SPN_CERT_PATH or FAB_SPN_FEDERATED_TOKEN must be set', 'AuthenticationFailed'))).toBe('signed-out')
+  expect(run(1, '', 'ERROR: token expired, please sign in again')).toBe('signed-out')
+  expect(run(1, fabJson("An unexpected error occurred: HTTPSConnectionPool(host='api.fabric.microsoft.com', port=443): Max retries exceeded with url: /v1/workspaces (Caused by NameResolutionError(\"Failed to resolve 'api.fabric.microsoft.com'\"))", 'UnexpectedError'))).toBe('unreachable')
+  expect(run(1, fabJson("An unexpected error occurred: HTTPSConnectionPool(host='api.fabric.microsoft.com', port=443): Max retries exceeded with url: /v1/workspaces (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 407 Proxy Authentication Required')))", 'UnexpectedError'))).toBe('unreachable')
+  expect(run(1, '', 'ConnectionResetError: [Errno 104] Connection reset by peer')).toBe('unreachable')
+  expect(run(1, fabJson('Access is forbidden. You do not have permission to access this resource', 'Forbidden'))).toBe('')
+  expect(runFailure({ exitCode: 1, stdout: fabJson('Access is forbidden', 'Forbidden'), stderr: '' }, 'fab ls failed').message).toBe('Access is forbidden')
 })
