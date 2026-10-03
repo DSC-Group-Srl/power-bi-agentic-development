@@ -814,3 +814,17 @@ test('/fabric-pane takes a workspace name with spaces, quoted or not', { timeout
   expect((await rowsOf(ui)).active).toBe('W:WS02')
   await ui.unmount()
 })
+
+test('command -v fab only looks the CLI up, so the pane does not say Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  let drawn = ''
+  onTool = async () => {
+    drawn = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'command -v fab' } as any)
+  onTool = null
+  expect(drawn).not.toContain('Claude is working in Fabric')
+  await ui.unmount()
+})

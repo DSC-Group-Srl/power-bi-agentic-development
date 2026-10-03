@@ -239,7 +239,8 @@ export function invocations(command: string, sessionCwd: string, home: string, w
       else if (word === 'timeout') {
         j = skipFlags(toks, j + 1, word)
         if (/^\d/.test(toks[j] ?? '')) j++
-      } else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1, word)
+      } else if (word === 'command' && /^-[A-Za-z]*[vV]/.test(toks[j + 1] ?? '')) break
+      else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1, word)
       else break
     }
     const head = toks[j]?.split('/').pop() ?? ''

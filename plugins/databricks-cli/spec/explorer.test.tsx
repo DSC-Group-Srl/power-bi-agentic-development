@@ -516,3 +516,18 @@ test('while Claude reads far down the tree, its catalog and schema stay pinned; 
   expect(JSON.stringify(await ui.drawn())).not.toContain('Claude is working')
   await ui.unmount()
 })
+
+test('command -v databricks only looks the CLI up, so the pane does not say Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  let drawn = ''
+  onTool = async () => {
+    drawn = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'command -v databricks' } as any)
+  onTool = null
+  expect(drawn).not.toContain('Claude is working in Databricks')
+  await ui.unmount()
+})

@@ -280,7 +280,8 @@ export function invocations(command: string, sessionCwd: string, base: Record<st
       } else if (word === 'while' || word === 'until') {
         loops.push({ name: '', words: [] })
         j++
-      } else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1, word)
+      } else if (word === 'command' && /^-[A-Za-z]*[vV]/.test(toks[j + 1] ?? '')) break
+      else if (PREFIXES.has(word)) j = skipFlags(toks, j + 1, word)
       else break
     }
     const head = toks[j]?.split('/').pop()
