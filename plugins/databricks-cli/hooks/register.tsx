@@ -797,7 +797,9 @@ export const register: Register = (on, options) => {
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
     const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
-    let from = Math.max(0, Math.min(fits ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
+    const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === ex.cursor)) - Math.floor(room / 2), rows.length - room))
+    const inView = lit >= base && at < base + room
+    let from = inView ? base : Math.max(0, Math.min(fits ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
     const cap = Math.max(1, Math.floor(room / 3))
     let pinned = follow && ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
     if (pinned.length) {

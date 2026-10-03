@@ -467,3 +467,22 @@ test('a plain glyphs setting is a choice, not a fallback, so no font hint', { ti
   expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('databricks-nf')
   await ui.unmount()
 })
+
+test('a highlight on a row already in view does not scroll the tree', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:jobs', 'S:catalog', 'UC:main', 'UC:main.sales', 'UC:main.sales.orders']) {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  const before = (await rowsOf(ui)).rows[0].id
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  await clock.advance(50)
+  const during = await rowsOf(ui)
+  expect(JSON.stringify(during.rows.find((r: any) => r.id === 'UC:main.sales.orders'))).toContain('"sh":"purple"')
+  expect(during.rows[0].id).toBe(before)
+  await ui.unmount()
+})
