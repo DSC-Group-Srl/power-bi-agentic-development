@@ -410,3 +410,23 @@ test('double-clicking a section navigates into it; home comes back; a SQL statem
   expect(ids(await rowsOf(ui))).toContain('S:catalog')
   await ui.unmount()
 })
+
+test('plain glyphs: sections, catalog objects, navigation and buttons draw without any private-use characters', { timeoutMs: 20_000, options: { glyphs: 'plain' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:workspace', 'S:catalog', 'UC:main', 'UC:main.sales', 'S:compute', 'S:jobs']) {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  await clock.advance(600)
+  await ui.post({ press: 'UC:main' }, { in: 'rows' })
+  await clock.advance(100)
+  await ui.post({ press: 'UC:main' }, { in: 'rows' })
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  await ui.unmount()
+})

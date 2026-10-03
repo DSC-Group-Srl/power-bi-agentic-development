@@ -624,3 +624,30 @@ test('a te query against a Fabric model lights the semantic model purple', { tim
   expect(JSON.stringify(p.rows.find((r: any) => r.id === 'W:WS00/Sales.SemanticModel'))).toContain('"sh":"purple"')
   await ui.unmount()
 })
+
+test('plain glyphs: domains, lakehouse folders, navigation and buttons draw without any private-use characters', { timeoutMs: 20_000, options: { glyphs: 'plain' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const lake = ITEMS as Record<string, { name: string; id?: string; type?: string }[]>
+  lake['WS00.Workspace/LH.Lakehouse'] = [{ name: 'Files' }, { name: 'Tables' }]
+  const ui = await open($, clock, 'terminal')
+  const press = async (id: string) => {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  await press(`D:${DOM}`)
+  await press('W:WS00')
+  await press('W:WS00/LH.Lakehouse')
+  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  await clock.advance(600)
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.advance(100)
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  delete lake['WS00.Workspace/LH.Lakehouse']
+  domainsOn = false
+  await ui.unmount()
+})
