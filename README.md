@@ -167,7 +167,7 @@ The repo contains skills, agents, and hooks.
 - **Hooks** run automatically after tool use to validate files and catch errors early. They are deterministic; they fire when a specific pattern is matched, not by LLM judgment.
 - **Mods** add a pane to Claude Code itself. The Fabric and Databricks panes browse your tenant or workspace as a tree beside the conversation, shimmer what Claude reads, downloads, uploads or changes through the CLI, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
 
-Mods need Claude Code 2.1.287 or newer. The panes live in the sidebar on the right, which needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide; in the default layout or tmux they stay hidden and their command tells you how to switch. Icons use the brand symbol fonts when installed, then a Nerd Font, then plain Unicode; set the `glyphs` option on the plugin to force one.
+Mods need Claude Code 2.1.287 or newer. The panes live in the sidebar on the right, which needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide; in the default layout or tmux they stay hidden and their command tells you how to switch. Icons use the brand symbol fonts when installed, then a Nerd Font, then plain Unicode; set the `glyphs` option on the plugin to force one. For the brand icons, install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) for the Fabric pane and [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) for the Databricks pane, then restart the terminal.
 
 Hook checks can be individually toggled via config files. Set any check to `false` to disable it:
 - `plugins/pbip/hooks/config.yaml` -- PBIR, TMDL, and report binding validation
@@ -297,7 +297,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 |------|------|-------------|
 | Skill | [`fabric-cli`](plugins/fabric-cli/skills/fabric-cli/) | Fabric CLI (fab) for any remote operation in Power BI or Fabric (works fully on Pro, PPU; Fabric not required) |
 | Command | [`/migrating-fabric-trial-capacities`](plugins/fabric-cli/commands/migrating-fabric-trial-capacities.md) | Migrate workspaces from trial to production capacity |
-| Mod | [`/fabric-pane`](plugins/fabric-cli/hooks/) | Fabric pane: workspaces and items as a tree that follows `fab`, with live highlights, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal |
+| Mod | [`/fabric-pane`](plugins/fabric-cli/hooks/) | Fabric pane: workspaces and items as a tree that follows `fab`, with live highlights, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
 
 </details>
 
@@ -315,7 +315,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 
 | Type | Name | Description |
 |------|------|-------------|
-| Mod | [`/databricks-pane`](plugins/databricks-cli/hooks/) | Databricks pane: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards as a tree that follows `databricks`, with live highlights, profile switching (`-p` or `DATABRICKS_CONFIG_PROFILE`), copy of CLI arguments, and open in Databricks. Optional arg: a profile |
+| Mod | [`/databricks-pane`](plugins/databricks-cli/hooks/) | Databricks pane: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards as a tree that follows `databricks`, with live highlights, profile switching (`-p` or `DATABRICKS_CONFIG_PROFILE`), copy of CLI arguments, and open in Databricks. Optional arg: a profile. Icons: [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) |
 
 </details>
 
