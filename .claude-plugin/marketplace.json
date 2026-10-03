@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "A marketplace for skills and tools for agentic Power BI development.",
-    "version": "26.31.5"
+    "version": "26.40.0"
   },
   "plugins": [
     {
@@ -45,13 +45,18 @@
     },
     {
       "name": "fabric-cli",
-      "description": "Connect to, read, and modify anything in Fabric via the CLI.",
+      "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric pane.",
       "source": "./plugins/fabric-cli"
     },
     {
       "name": "fabric-admin",
       "description": "Audit tenant settings, governance, security groups, and Fabric admin state.",
       "source": "./plugins/fabric-admin"
+    },
+    {
+      "name": "databricks-cli",
+      "description": "Browse Databricks workspaces and Unity Catalog in a pane that follows the databricks CLI.",
+      "source": "./plugins/databricks-cli"
     },
     {
       "name": "custom-visuals",

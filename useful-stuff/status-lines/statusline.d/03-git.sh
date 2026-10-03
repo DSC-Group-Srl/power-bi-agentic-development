@@ -195,7 +195,7 @@ else
                                     ado_project="${BASH_REMATCH[2]}"
                                     ado_repo="${BASH_REMATCH[3]}"
                                 fi
-                                # Project name may be URL-encoded ("Tabular%20Editor%20Learn")
+                                # Project name may be URL-encoded ("My%20Project")
                                 if [ -n "$ado_project" ] && command -v python3 >/dev/null 2>&1; then
                                     ado_project=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.argv[1]))' "$ado_project" 2>/dev/null || printf '%s' "$ado_project")
                                 fi

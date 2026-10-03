@@ -1,7 +1,7 @@
 {
-  "name": "fabric-cli",
+  "name": "databricks-cli",
   "version": "26.40.0",
-  "description": "Connect to, read, and modify anything in Fabric via the CLI, with a Fabric pane that follows what fab does.",
+  "description": "A Databricks pane that follows the databricks CLI: browse workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards, and see what Claude reads or changes.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"
@@ -14,11 +14,11 @@
     "glyphs": {
       "type": "string",
       "title": "Glyphs",
-      "description": "Icon set: auto uses FabricSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
+      "description": "Icon set: auto uses DatabricksSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
       "default": "auto",
       "options": [
         "auto",
-        "fabric",
+        "databricks",
         "nerd",
         "plain"
       ]
@@ -45,13 +45,10 @@
     }
   },
   "keywords": [
-    "power-bi",
-    "fabric",
-    "fabric-cli",
-    "fab",
-    "semantic-model",
+    "databricks",
+    "databricks-cli",
+    "unity-catalog",
     "workspace",
-    "lakehouse",
     "mod",
     "explorer"
   ]
