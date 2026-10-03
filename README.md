@@ -165,9 +165,7 @@ The repo contains skills, agents, and hooks.
 - **Skills** teach agents domain knowledge and workflows. They activate automatically based on task context, or can be invoked manually with `/skill-name`. In Claude Code, skills and commands have coalesced; commands are simply more prescriptive skill workflows.
 - **Agents** are autonomous subprocesses that handle complex, multi-step tasks independently; typically used for review and validation.
 - **Hooks** run automatically after tool use to validate files and catch errors early. They are deterministic; they fire when a specific pattern is matched, not by LLM judgment.
-- **Mods** add a pane to Claude Code itself. The Fabric and Databricks panes browse your tenant or workspace as a tree beside the conversation, shimmer what Claude reads, downloads, uploads or changes through the CLI, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
-
-Mods need Claude Code 2.1.287 or newer. The panes live in the sidebar on the right, which needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide; in the default layout or tmux they stay hidden and their command tells you how to switch. Icons use the brand symbol font together with a Nerd Font when both are installed, then a Nerd Font alone, then plain Unicode; auto detection covers Linux and macOS, and the `glyphs` option on the plugin forces one (set it on Windows). For the brand icons, install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) for the Fabric pane and [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) for the Databricks pane, then restart the terminal. The `follow` option (Follow Claude) decides whether the tree scrolls to what Claude touches. When the icons fall back to plain Unicode, Claude gets a one-line install hint once per session; the `fontHint` option turns it off. In a fullscreen session the pane opens by itself on Claude's first `fab` or `databricks` command.
+- **Mods** add a pane to Claude Code itself; see [Claude Code mods](#claude-code-mods).
 
 Hook checks can be individually toggled via config files. Set any check to `false` to disable it:
 - `plugins/pbip/hooks/config.yaml` -- PBIR, TMDL, and report binding validation
@@ -329,6 +327,31 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 
 </details>
 
+
+## Claude Code mods
+
+> [!WARNING]
+> Mods only work in Claude Code 2.1.287 or newer. In other tools, such as Copilot CLI, the panes do not appear.
+
+Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant or Databricks workspace as a tree beside the conversation, highlight what Claude reads, downloads, uploads or changes through the CLI, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
+
+### Fabric pane
+
+`/fabric-pane` from the `fabric-cli` plugin follows `fab`: workspaces grouped by domain, items, lakehouse tables and files.
+
+<img src="media/mods/fabric-pane.gif" alt="The Fabric pane highlighting a semantic model Claude reads" width="720">
+
+### Databricks pane
+
+`/databricks-pane` from the `databricks-cli` plugin follows `databricks`: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards.
+
+<img src="media/mods/databricks-pane.gif" alt="The Databricks pane highlighting a table Claude reads" width="720">
+
+### Setup
+
+- **Layout:** the sidebar needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide. In the default layout or tmux the panes stay hidden and their command tells you how to switch. In a fullscreen session a pane opens by itself on Claude's first `fab` or `databricks` command
+- **Icons:** install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) or [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) together with a Nerd Font, then restart the terminal. Without them the panes use a Nerd Font alone, then plain Unicode. Auto detection covers Linux and macOS; on Windows set the `glyphs` option
+- **Options:** `glyphs` forces an icon set; `follow` (Follow Claude) decides whether the tree scrolls to what Claude touches; `fontHint` turns off the one-line install hint Claude gets once per session when the icons fall back to plain Unicode
 
 ## Useful stuff
 
