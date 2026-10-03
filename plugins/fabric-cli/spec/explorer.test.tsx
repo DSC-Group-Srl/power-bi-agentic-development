@@ -754,3 +754,22 @@ test('a plain glyphs setting is a choice, not a fallback, so no font hint', { ti
   expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('fabric-nf')
   await ui.unmount()
 })
+
+test('a fab command Claude runs in another workspace leaves your selection where you put it', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: `D:${DOM}` }, { in: 'rows' })
+  await clock.settle()
+  await clock.advance(600)
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:WS00')
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS40.Workspace/Model.SemanticModel" -q id' } as any)
+  await clock.advance(3000)
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:WS00')
+  domainsOn = false
+  await ui.unmount()
+})

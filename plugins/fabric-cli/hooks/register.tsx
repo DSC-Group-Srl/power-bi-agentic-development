@@ -638,10 +638,10 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
   return job
 }
 
-async function reveal($: EngineInterface, workspace: string): Promise<void> {
+async function reveal($: EngineInterface, workspace: string, focus = false): Promise<void> {
   const n = wsNode((await get($)).nodes, workspace)
   if (!n) return
-  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, ...ancestors(cur.nodes, n.id), n.id])], cursor: n.id }))
+  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, ...ancestors(cur.nodes, n.id), n.id])], ...(focus ? { cursor: n.id } : {}) }))
   await expandFabric($, n)
 }
 
@@ -824,7 +824,7 @@ export const register: Register = (on, options) => {
     const [workspace] = tokenize(e.args ?? '')
     await point($, { kind: 'fabric' }, 'asked', true)
     await refresh($)
-    if (workspace) await reveal($, workspace.replace(/\.Workspace$/i, ''))
+    if (workspace) await reveal($, workspace.replace(/\.Workspace$/i, ''), true)
     return { text: workspace ? `Fabric pane on ${workspace}.` : 'Fabric pane open.' }
   })
 
