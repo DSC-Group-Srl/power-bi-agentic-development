@@ -773,3 +773,31 @@ test('a fab command Claude runs in another workspace leaves your selection where
   domainsOn = false
   await ui.unmount()
 })
+
+test('while Claude reads far down the tree, the domain and workspace it sits in stay pinned; the search row says Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: `D:${DOM}` }, { in: 'rows' })
+  await clock.settle()
+  await clock.advance(600)
+  await ui.post({ press: 'D:none' }, { in: 'rows' })
+  await clock.settle()
+  let working = ''
+  onTool = async () => {
+    working = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS50.Workspace/Model.SemanticModel" -q id' } as any)
+  onTool = null
+  expect(working).toContain('Claude is working in Fabric...')
+  await clock.advance(100)
+  const during = (await rowsOf(ui)).rows.map((r: any) => r.id)
+  expect(during).toContain('D:none')
+  expect(during).toContain('W:WS50')
+  await clock.advance(6000)
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('Claude is working')
+  domainsOn = false
+  await ui.unmount()
+})

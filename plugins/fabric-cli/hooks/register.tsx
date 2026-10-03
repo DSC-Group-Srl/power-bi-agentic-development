@@ -973,13 +973,16 @@ export const register: Register = (on, options) => {
     const fits = lit >= 0 && at - lit < room - 2
     const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === ex.cursor)) - Math.floor(room / 2), rows.length - room))
     const inView = lit >= base && at < base + room
-    let from = inView ? base : Math.max(0, Math.min(fits ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
+    const flashing = lit >= 0 && !inView
+    const nearBottom = (span: number) => Math.max(0, Math.min(fits ? Math.min(Math.max(0, lit - 1), at - span + 3) : at - span + 3, rows.length - span))
+    let from = flashing ? nearBottom(room) : base
     const cap = Math.max(1, Math.floor(room / 3))
-    let pinned = follow && ex.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
+    const chain = new Set(flashing ? ancestors(ex.nodes, focusId) : [])
+    const keep = (id: string) => chain.has(id) || isLit(id)
+    let pinned = flashing ? rows.slice(0, from).filter(r => keep(r.node.id)).slice(-cap) : []
     if (pinned.length) {
-      const rest = Math.max(3, room - pinned.length)
-      from = Math.max(0, Math.min(at - Math.floor(rest / 2), rows.length - rest))
-      pinned = rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap)
+      from = nearBottom(Math.max(3, room - pinned.length - 1))
+      pinned = rows.slice(0, from).filter(r => keep(r.node.id)).slice(-cap)
     }
     const max = Math.max(0, rows.length - room)
     if (ex.scroll !== null) {
@@ -1051,6 +1054,9 @@ export const register: Register = (on, options) => {
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
+            {busyTone(HEADER) && !ex.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: busyTone(HEADER) }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            ) : (
             <Input
               key="q"
               label="/ "
@@ -1061,6 +1067,7 @@ export const register: Register = (on, options) => {
               onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
               onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
             />
+            )}
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
