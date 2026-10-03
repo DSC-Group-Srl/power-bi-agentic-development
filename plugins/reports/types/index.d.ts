@@ -21,10 +21,8 @@ export type Explorer = {
   detail: string[]
   status: string
   flash: string[]
-  flashOn: boolean
-  flashTones: Record<string, string>
-  busy: Record<string, { tone: string; runs: string[]; at: number }>
   flashDim: string[]
+  work: { run: string; tone: string; running: boolean; at: number } | null
   targetUrl: string
   scroll: Record<string, number>
   root: string

@@ -35,8 +35,10 @@ const truncated = new Set<string>()
 let onTool: ((e: any) => Promise<void>) | null = null
 const failingDb = new Set<string>()
 let gate: { key: string; wait: Promise<void> } | null = null
+let cliFail: 'spawn' | { exitCode: number; stderr: string } | null = null
 
 function world(on: any, env: Record<string, string>, ran: Ran, copied: string[]) {
+  cliFail = null
   mock.env(on, env)
   const clock = mock.clock(on, { now: 1_800_000_000_000 })
   mock.store(on)
@@ -73,6 +75,8 @@ function world(on: any, env: Record<string, string>, ran: Ran, copied: string[])
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'databricks') {
       const key = argv.slice(1).filter((a, i, all) => a !== '-o' && all[i - 1] !== '-o' && a !== '-p' && all[i - 1] !== '-p' && !a.startsWith('--omit-')).join(' ')
+      if (cliFail === 'spawn') throw new Error('spawn databricks ENOENT')
+      if (cliFail) return { value: { exitCode: cliFail.exitCode, stdout: '', stderr: cliFail.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
       if (gate && gate.key === key) await gate.wait
       if (failingDb.has(key)) return { value: { exitCode: 1, stdout: '', stderr: 'PERMISSION_DENIED', isStdoutTruncated: false, isStderrTruncated: false } }
       if (truncated.has(key)) return { value: { exitCode: 0, stdout: JSON.stringify(DATA[key] ?? []).slice(0, 20), stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
@@ -94,6 +98,18 @@ const rowsOf = async (ui: any) => {
   return find(await ui.drawn())?.props.props
 }
 const ids = (p: any) => p.rows.map((r: any) => r.id)
+const drawnText = async (ui: any) => JSON.stringify(await ui.drawn())
+const byKey = (n: any, key: string): any => (n?.props?.key === key ? n : (n?.children ?? []).map((c: any) => byKey(c, key)).find(Boolean))
+const LOGIN = 'databricks auth login --host <your workspace URL>'
+const ONBOARD_TITLES = ['Databricks CLI not found', 'Not signed in to Databricks', "Can't reach Databricks"]
+
+async function shimmerOf(ui: any, id: string): Promise<{ working: string; lit: string; others: string[] }> {
+  const tree = await ui.drawn()
+  const toneIn = (row: any) => row?.left.find((s: any) => s.sh)?.sh ?? ''
+  const working = toneIn(byKey(tree, 'working')?.props.props.rows[0])
+  const rows = byKey(tree, 'rows')?.props.props.rows ?? []
+  return { working, lit: toneIn(rows.find((r: any) => r.id === id)), others: rows.map(toneIn).filter((t: string) => t && t !== working) }
+}
 const NERD = /[\u{e000}-\u{f8ff}\u{f0000}-\u{fffff}]/u
 
 async function open($: any, clock: any, surface: 'terminal' | 'desktop') {
@@ -529,5 +545,208 @@ test('command -v databricks only looks the CLI up, so the pane does not say Clau
   await $.tool.call({ tool: 'Bash', command: 'command -v databricks' } as any)
   onTool = null
   expect(drawn).not.toContain('Claude is working in Databricks')
+  await ui.unmount()
+})
+
+test('the working text and the row shimmer run on one clock in one tone: both from the command start until its flash ends', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:catalog', 'UC:main', 'UC:main.sales']) {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  const together = (s: { working: string; lit: string; others: string[] }) => {
+    expect(Boolean(s.working)).toBe(Boolean(s.lit))
+    expect(s.working).toBe(s.lit)
+    expect(s.others).toEqual([])
+  }
+  const orders = 'UC:main.sales.orders'
+  let during = { working: '', lit: '', others: [] as string[] }
+  onTool = async () => {
+    during = await shimmerOf(ui, orders)
+  }
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  onTool = null
+  await clock.advance(50)
+  const flashing = await shimmerOf(ui, orders)
+  await clock.advance(1500)
+  const later = await shimmerOf(ui, orders)
+  await clock.advance(1500)
+  await clock.settle()
+  const after = await shimmerOf(ui, orders)
+  for (const s of [during, flashing, later, after]) together(s)
+  expect(during.working).toBe('purple')
+  expect(flashing.working).toBe('purple')
+  expect(later.working).toBe('purple')
+  expect(after.working).toBe('')
+
+  await $.tool.call({ tool: 'Bash', command: 'databricks tables get main.sales.orders' } as any)
+  await clock.advance(2000)
+  let second = { working: '', lit: '', others: [] as string[] }
+  onTool = async () => {
+    second = await shimmerOf(ui, 'UC:main.sales')
+  }
+  await $.tool.call({ tool: 'Bash', command: 'databricks schemas update main.sales --comment x' } as any)
+  onTool = null
+  together(second)
+  expect(second.working).toBe('orange')
+  await clock.advance(1500)
+  const restarted = await shimmerOf(ui, 'UC:main.sales')
+  together(restarted)
+  expect(restarted.working).toBe('orange')
+  await clock.advance(3000)
+  await clock.settle()
+  const done = await shimmerOf(ui, 'UC:main.sales')
+  together(done)
+  expect(done.working).toBe('')
+
+  let bare = ''
+  onTool = async () => {
+    bare = (await shimmerOf(ui, orders)).working
+  }
+  await $.tool.call({ tool: 'Bash', command: 'databricks current-user me' } as any)
+  onTool = null
+  expect(bare).toBe('purple')
+  await clock.advance(50)
+  expect((await shimmerOf(ui, orders)).working).toBe('')
+  await ui.unmount()
+})
+
+test('onboarding: a databricks CLI that cannot start shows install and sign-in steps, and a command copies on click', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  cliFail = 'spawn'
+  const ui = await open($, clock, 'terminal')
+  const drawn = await drawnText(ui)
+  for (const line of [
+    'Databricks CLI not found',
+    'This pane needs the Databricks CLI (databricks).',
+    'Install it',
+    'macOS or Linux: ',
+    'brew tap databricks/tap && brew install databricks',
+    'Windows: ',
+    'winget install Databricks.DatabricksCLI',
+    'Then sign in to your workspace',
+    LOGIN,
+    "Press ↻ when you're done. Or ask Claude to set it up for you.",
+  ])
+    expect(drawn).toContain(line)
+  expect(drawn).not.toMatch(NERD)
+  expect(await rowsOf(ui)).toBeUndefined()
+  await ui.post({ press: 'brew tap databricks/tap && brew install databricks' }, { in: 'onboard-1-1' })
+  await clock.settle()
+  await ui.post({ copy: LOGIN }, { in: 'onboard-2-1' })
+  await clock.settle()
+  expect(copied).toEqual(['brew tap databricks/tap && brew install databricks', LOGIN])
+  cliFail = { exitCode: 127, stderr: 'sh: 1: databricks: not found' }
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await drawnText(ui)).toContain('Databricks CLI not found')
+  await ui.unmount()
+})
+
+test('onboarding: every way the CLI says it is signed out shows the sign-in step with Nerd Font icons', { timeoutMs: 20_000, options: { glyphs: 'nerd' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const stderr of [
+    'Error: default auth: cannot configure default credentials, please check https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication to configure credentials for your preferred authentication method.',
+    'Error: A new access token could not be retrieved because the refresh token is invalid. To reauthenticate, run the following command:\n  $ databricks auth login --host https://dbc-demo.cloud.databricks.com',
+    'Error: resolve: ~/.databrickscfg has no prod profile configured. Configure with: databricks configure --profile prod',
+    'Error: Invalid access token. [ReqId: 1a2b]',
+    'Error: Credential was not sent or was of an unsupported type for this API. [ReqId: 1a2b]',
+    'Error: oauth2: token expired and refresh token is not set',
+    "Error: no profiles configured. Run 'databricks auth login' to create a profile",
+    'Error: 401 Unauthorized',
+  ]) {
+    cliFail = { exitCode: 1, stderr }
+    await ui.press({ key: 'refresh' })
+    await clock.settle()
+    const drawn = await drawnText(ui)
+    expect(drawn).toContain('Not signed in to Databricks')
+    expect(drawn).toContain(LOGIN)
+    expect(drawn).toContain("Press ↻ when you're done. Several workspaces? Pick one with -p <profile>.")
+    expect(drawn).not.toContain('Databricks CLI not found')
+    expect(drawn).toMatch(NERD)
+    expect(await rowsOf(ui)).toBeUndefined()
+  }
+  await ui.post({ press: LOGIN }, { in: 'onboard-0-1' })
+  await clock.settle()
+  expect(copied).toEqual([LOGIN])
+  await ui.unmount()
+})
+
+test('onboarding: a network failure shows the first line of the CLI error and the network hint', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const first of [
+    'Error: dial tcp 10.0.0.1:443: connect: connection refused',
+    'Error: Get https://dbc-demo.cloud.databricks.com/api/2.0/preview/scim/v2/Me: dial tcp: lookup dbc-demo.cloud.databricks.com: no such host',
+    'Error: Get https://dbc-demo.cloud.databricks.com/api/2.0/preview/scim/v2/Me: proxyconnect tcp: dial tcp 10.1.1.1:3128: i/o timeout',
+    'Error: read tcp 10.0.0.2:51234->10.0.0.1:443: read: connection reset by peer',
+  ]) {
+    cliFail = { exitCode: 1, stderr: `${first}\nretrying in 2s` }
+    await ui.press({ key: 'refresh' })
+    await clock.settle()
+    const drawn = await drawnText(ui)
+    expect(drawn).toContain("Can't reach Databricks")
+    expect(drawn).toContain(first)
+    expect(drawn).toContain('Check your network or proxy, then press ↻.')
+    expect(drawn).not.toContain('retrying in 2s')
+    expect(drawn).not.toContain('Not signed in')
+  }
+  await ui.unmount()
+})
+
+test('onboarding: any other CLI error keeps the tree and its error line', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  cliFail = { exitCode: 1, stderr: 'Error: INTERNAL_ERROR: the service hit an unexpected condition' }
+  const ui = await open($, clock, 'terminal')
+  expect(ids(await rowsOf(ui))).toContain('S:catalog')
+  await ui.post({ press: 'S:catalog' }, { in: 'rows' })
+  await clock.settle()
+  const drawn = await drawnText(ui)
+  expect(drawn).toContain('error: Error: INTERNAL_ERROR: the service hit an unexpected condition')
+  for (const title of ONBOARD_TITLES) expect(drawn).not.toContain(title)
+  expect(ids(await rowsOf(ui))).toContain('S:jobs')
+  await ui.unmount()
+})
+
+test('onboarding: refresh brings the tree back once listing works, and a sign-out mid-session onboards until a listing works again', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  cliFail = { exitCode: 1, stderr: 'Error: default auth: cannot configure default credentials' }
+  const ui = await open($, clock, 'terminal')
+  expect(await drawnText(ui)).toContain('Not signed in to Databricks')
+  cliFail = null
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  let drawn = await drawnText(ui)
+  for (const title of ONBOARD_TITLES) expect(drawn).not.toContain(title)
+  expect(ids(await rowsOf(ui))).toEqual(['S:workspace', 'S:catalog', 'S:compute', 'S:jobs', 'S:pipelines', 'S:apps', 'S:dashboards'])
+  await ui.post({ press: 'S:catalog' }, { in: 'rows' })
+  await clock.settle()
+  cliFail = { exitCode: 1, stderr: 'Error: Invalid access token. [ReqId: 9f]' }
+  await clock.advance(600)
+  await ui.post({ press: 'S:jobs' }, { in: 'rows' })
+  await clock.settle()
+  expect(await drawnText(ui)).toContain('Not signed in to Databricks')
+  expect(await rowsOf(ui)).toBeUndefined()
+  cliFail = null
+  await $.tool.call({ tool: 'Bash', command: 'databricks clusters list' } as any)
+  await clock.settle()
+  drawn = await drawnText(ui)
+  for (const title of ONBOARD_TITLES) expect(drawn).not.toContain(title)
+  expect(ids(await rowsOf(ui))).toEqual(expect.arrayContaining(['UC:main', 'J:100']))
   await ui.unmount()
 })

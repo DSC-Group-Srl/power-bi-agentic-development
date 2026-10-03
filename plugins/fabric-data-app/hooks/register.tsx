@@ -6,7 +6,7 @@ import { CLIS } from './clis'
 import { glyphFor, type Tier } from './glyphs'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR, plainIcon, stronger } from './icons'
-import { cliCalls, deploys, mutates, tokenize } from './parse'
+import { type CliCall, cliCalls, deploys, mutates, tokenize } from './parse'
 import {
   ancestorsOf,
   type Change,
@@ -69,6 +69,8 @@ const HOME_PRUNE = ['Library', 'AppData', '.Trash']
 
 let blink: Timer | null = null
 let generation = 0
+let workTimer: Timer | null = null
+let workGen = 0
 let epoch = 0
 let lastPress = { key: '', at: 0 }
 let view: { from: number; max: number; ids: string[] } = { from: 0, max: 0, ids: [] }
@@ -105,7 +107,7 @@ let scanJobs: Job[] = []
 const running = new Map<string, Job>()
 
 type Since = { ms: number; mark: string; os: 'linux' | 'darwin' | 'win32' }
-type Job = { since: Since; usedCli: boolean; deploy: boolean; deployDir: string; busy: string }
+type Job = { since: Since; usedCli: boolean; deploy: boolean; deployDir: string; busy: boolean }
 
 let platform: Promise<'linux' | 'darwin' | 'win32'> | null = null
 let markId = 0
@@ -539,25 +541,25 @@ async function changedSince($: EngineInterface, dirs: string[], since: Since): P
   }
 }
 
-async function flash($: EngineInterface, ids: string[], tone = 'orange'): Promise<void> {
+async function flash($: EngineInterface, ids: string[], tone = 'orange', ends = 0): Promise<void> {
   const unique = [...new Set(ids)]
-  if (unique.length === 0) return
+  if (unique.length === 0 && ends === 0) return
   const apps = await getApps($)
-  const mine = ++generation
   const root = (await get($)).root
-  blink?.cancel()
-  blink = null
+  const now = await $.clock.now()
   const seen = new Set(view.ids)
   const inView = unique.every(id => seen.has(id))
+  let mode = 'none' as 'none' | 'flash' | 'work'
   await patch($, cur => {
+    mode = 'none'
     if (cur.root !== root) return {}
+    const w = ends > 0 ? cur.work : null
+    if (!w && unique.length === 0) return {}
     const open = new Set(cur.expanded)
-    const bright = new Set([...(cur.flashOn ? cur.flash.filter(id => !unique.includes(id)) : []), ...unique])
-    const dim = new Set<string>()
-    const tones: Record<string, string> = cur.flashOn ? { ...cur.flashTones } : {}
-    if (cur.flashOn) {
-      for (const id of cur.flashDim) dim.add(id)
-    }
+    const prior = w ? w.lit : cur.flashOn ? cur.flash : []
+    const bright = new Set([...prior.filter(id => !unique.includes(id)), ...unique])
+    const dim = new Set<string>(w ? w.dim : cur.flashOn ? cur.flashDim : [])
+    const tones: Record<string, string> = !w && cur.flashOn ? { ...cur.flashTones } : {}
     for (const id of unique) {
       tones[id] = tone
       const chain = chainOf(apps, id)
@@ -573,38 +575,71 @@ async function flash($: EngineInterface, ids: string[], tone = 'orange'): Promis
     for (const id of bright) dim.delete(id)
     const top = topOf(cur)
     const away = follow && top !== '' && unique.some(id => id !== top && !inside(top, id))
-    return {
-      flash: [...bright],
-      flashDim: [...dim],
-      flashOn: true,
-      flashTones: tones,
-      expanded: [...open],
-      ...(follow && !inView ? { scroll: null } : {}),
-      ...(away ? { top: '' } : {}),
+    const reveal: Partial<FileTree> = unique.length
+      ? { expanded: [...open], ...(follow && !inView ? { scroll: null } : {}), ...(away ? { top: '' } : {}) }
+      : {}
+    if (w) {
+      const n = Math.max(0, w.n - ends)
+      if (n === 0 && unique.length === 0) return { work: null }
+      if (n === 0) mode = 'work'
+      return { ...reveal, work: { ...w, n, lit: [...bright], dim: [...dim], until: n === 0 ? now + FLASH_MS : 0 } }
     }
+    mode = 'flash'
+    return { ...reveal, flash: [...bright], flashDim: [...dim], flashOn: true, flashTones: tones }
   })
-  if (generation !== mine) return
-  blink = $.clock.after(FLASH_MS, () => {
-    if (generation !== mine) return
-    blink = null
-    quiet(patch($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
-  })
+  if (mode === 'flash') {
+    const mine = ++generation
+    blink?.cancel()
+    blink = $.clock.after(FLASH_MS, () => {
+      if (generation !== mine) return
+      blink = null
+      quiet(patch($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
+    })
+  } else if (mode === 'work') {
+    const mine = ++workGen
+    workTimer?.cancel()
+    workTimer = $.clock.after(FLASH_MS, () => {
+      if (workGen !== mine) return
+      workTimer = null
+      quiet(patch($, cur => (workGen === mine && cur.work?.n === 0 ? { work: null } : {})))
+    })
+  }
+  if (unique.length === 0) return
   const t = await get($)
   if (!closed) await openPane($, { id: PANE, title: titleOf(t.root) })
 }
 
-async function markBusy($: EngineInterface, tone: string): Promise<void> {
+function touchedBy(apps: AppInfo[], calls: CliCall[]): string[] {
+  return [...new Set(calls.map(c => (c.cwd ? appOf(apps, c.cwd)?.dir : undefined)).filter((d): d is string => Boolean(d)))]
+}
+
+async function startWork($: EngineInterface, tone: string, lit: string[]): Promise<void> {
   const at = await $.clock.now()
-  await patch($, cur => ({ busy: { tone: cur.busy?.tone === 'teal' ? 'teal' : tone, n: (cur.busy?.n ?? 0) + 1, at } }))
+  workGen += 1
+  workTimer?.cancel()
+  workTimer = null
+  await patch($, cur => {
+    const live = cur.work && cur.work.n > 0 ? cur.work : null
+    return {
+      work: {
+        tone: live?.tone === 'teal' ? 'teal' : tone,
+        n: (live?.n ?? 0) + 1,
+        at,
+        until: 0,
+        lit: [...new Set([...(live?.lit ?? []), ...lit])],
+        dim: live?.dim ?? [],
+      },
+    }
+  })
 }
 
-async function clearBusy($: EngineInterface): Promise<void> {
-  await patch($, cur => ({ busy: cur.busy && cur.busy.n > 1 ? { ...cur.busy, n: cur.busy.n - 1 } : null }))
+function endWork($: EngineInterface): Promise<void> {
+  return flash($, [], 'orange', 1)
 }
 
-async function afterBash($: EngineInterface, jobs: Job[]): Promise<void> {
+async function afterBash($: EngineInterface, jobs: Job[]): Promise<{ ids: string[]; tone: string }> {
   const t = await get($)
-  if (!t.root) return
+  if (!t.root) return { ids: [], tone: 'orange' }
   const usedCli = jobs.some(j => j.usedCli)
   const deploy = jobs.some(j => j.deploy)
   const deployDir = jobs.map(j => j.deployDir).find(Boolean) ?? ''
@@ -626,10 +661,9 @@ async function afterBash($: EngineInterface, jobs: Job[]): Promise<void> {
   if (deploy) {
     const target = deployDir ? appOf(apps, deployDir) : undefined
     const deployed = [...changed, ...sync.changed].filter(d => apps.some(a => a.dir === d))
-    await flash($, deployed.length ? deployed : target ? [target.dir] : [], 'teal')
-    return
+    return { ids: deployed.length ? deployed : target ? [target.dir] : [], tone: 'teal' }
   }
-  await flash($, ids)
+  return { ids, tone: 'orange' }
 }
 
 function scheduleScan($: EngineInterface, job: Job): void {
@@ -640,12 +674,18 @@ function scheduleScan($: EngineInterface, job: Job): void {
       while (scanJobs.length) {
         const jobs = scanJobs
         scanJobs = []
+        let lit = { ids: [] as string[], tone: 'orange' }
         try {
-          await afterBash($, jobs)
+          lit = await afterBash($, jobs)
         } catch (err) {
           await report($, `refresh failed: ${err instanceof Error ? err.message : String(err)}`)
         } finally {
           await dropMarks($, jobs.map(j => j.since.mark))
+        }
+        try {
+          await flash($, lit.ids, lit.tone, jobs.filter(j => j.busy).length)
+        } catch (err) {
+          await report($, `refresh failed: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
     } finally {
@@ -814,7 +854,7 @@ async function startup($: EngineInterface, detect: boolean): Promise<void> {
     await $.state.set(THEME, DEFAULT_THEME)
   }
   const t = await get($)
-  if (t.flashOn || t.busy) await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: null }))
+  if (t.flashOn || t.work) await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, work: null }))
   const cwd = await cwdOf($)
   if (!t.root) await put($, () => emptyTree(cwd))
   const apps = await discover($, t.root || cwd)
@@ -870,22 +910,23 @@ export const register: Register = (on, options) => {
     if (e.tool !== 'Edit' && e.tool !== 'Write' && e.tool !== 'NotebookEdit' && e.tool !== 'Bash') return next(e)
     const cwd = await cwdOf($)
     const calls = e.tool === 'Bash' ? cliCalls(e.command, cwd, home) : []
-    const since = await sinceNow($, e.tool === 'Bash' && (calls.length > 0 || (await getApps($)).length > 0))
+    const known = e.tool === 'Bash' ? await getApps($) : []
+    const since = await sinceNow($, e.tool === 'Bash' && (calls.length > 0 || known.length > 0))
     const busy = calls.length && !closed && !noDock && (await get($)).root ? (calls.some(deploys) ? 'teal' : 'orange') : ''
-    if (busy) await markBusy($, busy)
+    if (busy) await startWork($, busy, touchedBy(known, calls))
     let result: Awaited<ReturnType<typeof next>>
     try {
       result = await next(e)
     } catch (err) {
       quiet(dropMarks($, [since.mark]))
-      if (busy) await clearBusy($)
+      if (busy) await endWork($)
       throw err
     }
     const record = e.tool === 'Bash' && !result.deny && !result.isError && result.result && typeof result.result === 'object' ? (result.result as { backgroundTaskId?: unknown }) : undefined
     const task = typeof record?.backgroundTaskId === 'string' ? record.backgroundTaskId : ''
-    if (busy && !task) await clearBusy($)
     if (result.deny || (result.isError && e.tool !== 'Bash')) {
       quiet(dropMarks($, [since.mark]))
+      if (busy) await endWork($)
       return result
     }
     const t = await get($)
@@ -894,10 +935,11 @@ export const register: Register = (on, options) => {
       const usedCli = used.length > 0
       if (usedCli && !t.root) await reset($, cwd)
       const deployed = used.find(deploys)
-      const job: Job = { since, usedCli, deploy: Boolean(deployed), deployDir: deployed?.cwd ?? '', busy: task ? busy : '' }
+      const job: Job = { since, usedCli, deploy: Boolean(deployed), deployDir: deployed?.cwd ?? '', busy: Boolean(busy) }
       if (!usedCli && (await getApps($)).length === 0) {
         quiet(dropMarks($, [since.mark]))
         if (task && busy) running.set(task, { ...job, usedCli: false })
+        else if (busy) await endWork($)
       } else if (task) running.set(task, job)
       else scheduleScan($, job)
     } else {
@@ -991,9 +1033,11 @@ export const register: Register = (on, options) => {
       for (const [task, job] of running) {
         if (!e.text.includes(task)) continue
         running.delete(task)
-        if (job.busy) await clearBusy($)
         if (job.usedCli || (await getApps($)).length > 0) scheduleScan($, job)
-        else quiet(dropMarks($, [job.since.mark]))
+        else {
+          quiet(dropMarks($, [job.since.mark]))
+          if (job.busy) await endWork($)
+        }
       }
     }
     const t = await get($)
@@ -1038,18 +1082,20 @@ export const register: Register = (on, options) => {
     const appByDir = new Map(apps.map(a => [a.dir, a]))
     const theme: Theme = (await $.state.get(THEME)).value ?? DEFAULT_THEME
     const now = await $.clock.now()
-    const busyTone = t.busy && now - t.busy.at < BUSY_MAX_MS ? t.busy.tone : ''
-    const bright = new Set(t.flashOn ? t.flash : [])
-    const dimmed = new Set(t.flashOn ? t.flashDim : [])
+    const work = t.work && (t.work.until ? now < t.work.until : now - t.work.at < BUSY_MAX_MS) ? t.work : null
+    const shining = [...(t.flashOn ? t.flash : []), ...(work ? work.lit : [])]
+    const bright = new Set(shining)
+    const dimmed = new Set([...(t.flashOn ? t.flashDim : []), ...(work ? work.dim : [])].filter(id => !bright.has(id)))
+    const toneOf = (id: string) => (work && (work.lit.includes(id) || work.dim.includes(id)) ? work.tone : (t.flashTones[id] ?? 'orange'))
     const ignored = new Set(t.ignored)
     const untracked = new Set(t.untrackedDirs)
     const width = Math.max(24, e.props.bodyColumns)
     const rows = itemsOf(t, apps)
     const room = Math.max(5, (e.props.scroll?.bodyRows ?? 40) - 3 - (t.selected ? 1 : 0))
     const isLit = (id: string) => bright.has(id) || dimmed.has(id)
-    const focus = follow && t.flashOn && t.flash.length ? (t.flash[t.flash.length - 1] ?? t.cursor) : t.cursor
+    const focus = follow && shining.length ? (shining[shining.length - 1] ?? t.cursor) : t.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focus))
-    const lit = follow && t.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && (bright.size > 0 || dimmed.size > 0) ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === t.cursor)) - Math.floor(room / 2), rows.length - room))
     const inView = lit >= base && at < base + room
@@ -1126,9 +1172,9 @@ export const register: Register = (on, options) => {
       const left: Seg[] = [
         { t: '  '.repeat(r.depth) },
         { t: caret, c: theme.muted },
-        isBright || isDim ? { t: glyph + ' ', sh: t.flashTones[n.id] ?? 'orange', dim: isDim, one: true } : { t: glyph + ' ', c: iconColor },
+        isBright || isDim ? { t: glyph + ' ', sh: toneOf(n.id), dim: isDim, one: true } : { t: glyph + ' ', c: iconColor },
       ]
-      if (isBright || isDim) left.push({ t: name, sh: t.flashTones[n.id] ?? 'orange', dim: isDim, b: isBright })
+      if (isBright || isDim) left.push({ t: name, sh: toneOf(n.id), dim: isDim, b: isBright })
       else left.push({ t: name, c: nameColor, b: Boolean(app) || n.id === t.selected, s: status === 'D' && n.kind !== 'dir' })
       const right: Seg[] = []
       if (meta) right.push({ t: ` ${meta}`, c: app?.item ? '#98c379' : theme.muted })
@@ -1190,8 +1236,8 @@ export const register: Register = (on, options) => {
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
-            {busyTone && !t.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: WORKING, sh: busyTone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+            {work && !t.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: WORKING, sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
               <Input
                 key="q"

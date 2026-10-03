@@ -10,7 +10,7 @@ const CONTAINER: Icon = { fabric: 0xf2609, nerd: '\u{f024b}', rgb: [197, 197, 19
 
 const REPORT_NERD: Record<string, string> = {
   page: '\u{f0214}',
-  visual: '\u{f0128}',
+  visual: '\u{f154e}',
   reportfilter: '\u{f0232}',
   pagefilter: '\u{f0232}',
   visualfilter: '\u{f0232}',
@@ -21,13 +21,90 @@ const REPORT_NERD: Record<string, string> = {
   'ext measure': '\u{f00ec}',
 }
 
+const VISUAL_NERD: Record<string, string> = {
+  accessibleTable: '\u{f1094}',
+  actionButton: '\u{f12a8}',
+  advancedSlicerVisual: '\u{f0570}',
+  aiNarratives: '\u{f0674}',
+  animatedNumber: '\u{f0199}',
+  areaChart: '\u{f0e91}',
+  azureMap: '\u{f0352}',
+  barChart: '\u{f066c}',
+  basicShape: '\u{f14fb}',
+  bookmarkNavigator: '\u{f0e15}',
+  card: '\u{f03a0}',
+  cardVisual: '\u{f0b77}',
+  clusteredBarChart: '\u{f066e}',
+  clusteredColumnChart: '\u{f0128}',
+  columnChart: '\u{f076a}',
+  dataQueryVisual: '\u{f0866}',
+  debugVisual: '\u{f00e4}',
+  decompositionTreeVisual: '\u{f04aa}',
+  donutChart: '\u{f07af}',
+  filledMap: '\u{f01e7}',
+  filterSlicer: '\u{f1aa3}',
+  funnel: '\u{f0236}',
+  gauge: '\u{f029a}',
+  group: '\u{f02c3}',
+  groupVisual: '\u{f02c3}',
+  heatMap: '\u{f066d}',
+  hundredPercentStackedAreaChart: '\u{f076b}',
+  hundredPercentStackedBarChart: '\u{f0729}',
+  hundredPercentStackedColumnChart: '\u{f056d}',
+  image: '\u{f02e9}',
+  keyDriversVisual: '\u{f06e8}',
+  keyInfluencers: '\u{f06e8}',
+  kpi: '\u{f0535}',
+  lineChart: '\u{f012a}',
+  lineClusteredColumnComboChart: '\u{f081f}',
+  lineStackedColumnComboChart: '\u{f1213}',
+  listSlicer: '\u{f096a}',
+  map: '\u{f034d}',
+  matrix: '\u{f121d}',
+  multiRowCard: '\u{f0ab7}',
+  pageNavigator: '\u{f0bb0}',
+  pieChart: '\u{f012b}',
+  pivotTable: '\u{f183c}',
+  pythonVisual: '\u{f0320}',
+  qnaVisual: '\u{f0817}',
+  rdlVisual: '\u{f0219}',
+  ribbonChart: '\u{f11df}',
+  scatterChart: '\u{f0e92}',
+  scorecard: '\u{f08c9}',
+  scriptVisual: '\u{f07d4}',
+  shape: '\u{f0831}',
+  shapeMap: '\u{f0560}',
+  slicer: '\u{f10e5}',
+  stackedAreaChart: '\u{f0127}',
+  stackedBarChart: '\u{f066c}',
+  stackedColumnChart: '\u{f076a}',
+  table: '\u{f04f1}',
+  tableEx: '\u{f04eb}',
+  textSlicer: '\u{f0eae}',
+  textbox: '\u{f0d11}',
+  treemap: '\u{f0e94}',
+  waterfallChart: '\u{f1918}',
+}
+
+const VISUAL_PLAIN: Record<string, string> = {
+  accessibleTable: '▧', actionButton: '►', advancedSlicerVisual: '⧉', aiNarratives: '✦', animatedNumber: '№', areaChart: '◢', azureMap: '♁',
+  barChart: '▤', basicShape: '○', bookmarkNavigator: '⚐', card: '#', cardVisual: '▭', clusteredBarChart: '≡', clusteredColumnChart: '▆',
+  columnChart: '▥', dataQueryVisual: '⊜', debugVisual: '✗', decompositionTreeVisual: '⊢', donutChart: '◎', filledMap: '◍', filterSlicer: '⧨',
+  funnel: '▽', gauge: '◠', group: '❐', groupVisual: '❐', heatMap: '▒', hundredPercentStackedAreaChart: '◩', hundredPercentStackedBarChart: '▬',
+  hundredPercentStackedColumnChart: '█', image: '⊡', keyDriversVisual: '☼', keyInfluencers: '☼', kpi: '⬈', lineChart: '∿',
+  lineClusteredColumnComboChart: '╫', lineStackedColumnComboChart: '╪', listSlicer: '⁝', map: '⌖', matrix: '⧆', multiRowCard: '⊟', pageNavigator: '⇥',
+  pieChart: '◔', pivotTable: '⊠', pythonVisual: 'π', qnaVisual: '?', rdlVisual: '⎙', ribbonChart: '≋', scatterChart: '∴', scorecard: '◉',
+  scriptVisual: 'ℛ', shape: '◭', shapeMap: '⬠', slicer: '☐', stackedAreaChart: '◿', stackedBarChart: '▤', stackedColumnChart: '▥', table: '▩',
+  tableEx: '▦', textSlicer: '⌕', textbox: '¶', treemap: '⊞', waterfallChart: '▟',
+}
+
 const ITEM_NERD: Record<string, string> = {
   SemanticModel: '\u{f01bc}',
   Report: '\u{f0219}',
 }
 
 const PLAIN: Record<string, string> = {
-  report: '▣', 'semantic model': '◆', group: '■', page: '□', visual: '▥', reportfilter: '▿', pagefilter: '▿',
+  report: '▣', 'semantic model': '◆', group: '■', page: '□', visual: '▢', reportfilter: '▿', pagefilter: '▿',
   visualfilter: '▿', bookmark: '⚑', theme: '◐', 'data role': '◫', field: '│', 'ext measure': 'Σ',
 }
 
@@ -79,16 +156,25 @@ function item(type: string): Icon {
   return { fabric: hit?.[0] ?? 0, nerd: ITEM_NERD[type] ?? '\u{f0214}', rgb: hit?.[1] ? lift(hit[1]) : null }
 }
 
+const CUSTOM_VISUAL = /^(.+?)[0-9A-F]{32}$/i
+
+export function visualLabel(type: string): string {
+  const custom = type.match(CUSTOM_VISUAL)?.[1]
+  return custom ? `${custom[0]?.toUpperCase()}${custom.slice(1)}, custom visual` : type
+}
+
 export function glyph(n: TreeNode, tier: Tier): Glyph {
-  const plain = PLAIN[n.kind] ?? '■'
+  const type = n.kind === 'visual' ? n.note || n.name : ''
+  if (n.kind === 'visual' && CUSTOM_VISUAL.test(type)) return pick({ fabric: 0, nerd: '\u{f0431}', rgb: GLYPH_DIM }, tier, '⧈')
+  const plain = VISUAL_PLAIN[type] ?? PLAIN[n.kind] ?? '■'
   if (n.kind === 'report') return pick(item('Report'), tier, plain)
   if (n.kind === 'semantic model') {
     const g = pick(item('SemanticModel'), tier, plain)
     return { ...g, label: g.color }
   }
   if (REPORT_NERD[n.kind]) {
-    const fabric = n.kind === 'visual' ? (PBIR_VISUALS[n.note || n.name] ?? PBIR_CHILDREN.visual) : PBIR_CHILDREN[n.kind]
-    return pick({ fabric: fabric ?? 0, nerd: REPORT_NERD[n.kind] ?? CONTAINER.nerd, rgb: GLYPH_DIM }, tier, plain)
+    const fabric = n.kind === 'visual' ? (PBIR_VISUALS[type] ?? PBIR_CHILDREN.visual) : PBIR_CHILDREN[n.kind]
+    return pick({ fabric: fabric ?? 0, nerd: VISUAL_NERD[type] ?? REPORT_NERD[n.kind] ?? CONTAINER.nerd, rgb: GLYPH_DIM }, tier, plain)
   }
   return pick(CONTAINER, tier, plain)
 }

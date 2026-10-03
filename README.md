@@ -374,6 +374,7 @@ Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant, D
 
 - **Layout:** the sidebar needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide. In the default layout or tmux the panes stay hidden and their command tells you how to switch. In a fullscreen session the Fabric, Databricks and report panes open by themselves on Claude's first `fab`, `databricks` or `pbir` command, and the data app pane when the working directory holds a Fabric App
 - **Icons:** install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) (Fabric, report and data app panes) or [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) together with a Nerd Font, then restart the terminal. Without them the panes use a Nerd Font alone, then plain Unicode. Auto detection covers Linux and macOS; on Windows set the `glyphs` option
+- **Getting started:** when the CLI is missing, you are not signed in or the service can't be reached, the Fabric and Databricks panes show the steps to fix it, with commands you can copy
 - **Options:** `glyphs` forces an icon set; `follow` (Follow Claude) decides whether the tree scrolls to what Claude touches; `fontHint` turns off the one-line install hint Claude gets once per session when the icons fall back to plain Unicode
 
 ## Useful stuff

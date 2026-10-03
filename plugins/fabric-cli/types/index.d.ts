@@ -12,6 +12,12 @@ export type TreeNode = {
   url?: string
 }
 
+export type SetupKind = 'missing' | 'signed-out' | 'unreachable'
+
+export type Setup = { kind: SetupKind; line: string }
+
+export type Work = { tone: string; at: number }
+
 export type Explorer = {
   target: Target | null
   nodes: TreeNode[]
@@ -22,12 +28,12 @@ export type Explorer = {
   detail: string[]
   status: string
   flash: string[]
-  flashOn: boolean
-  flashTones: Record<string, string>
+  work: Work | null
   busy: Record<string, { tone: string; n: number; at: number }>
   flashDim: string[]
   scroll: number | null
   root: string
+  setup: Setup | null
   byDomain?: boolean
 }
 

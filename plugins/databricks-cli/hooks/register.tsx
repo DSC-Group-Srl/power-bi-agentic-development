@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Explorer, Target, TreeNode } from '../types'
+import type { Explorer, Onboard, Target, TreeNode, Work } from '../types'
 import { glyph, titleGlyph as dbTitle, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
@@ -29,6 +29,13 @@ const TONES: Record<string, { bright: string[]; dim: string[] }> = {
   purple: { bright: ['#a855f7', '#c084fc', '#d8b4fe', '#f3e8ff'], dim: ['#581c87', '#6b21a8', '#8b47c4', '#a874d6'] },
 }
 const PLAIN_SPINNER = ['|', '/', '-', '\\']
+const TONE_RANK = ['orange', 'pink', 'teal', 'purple']
+const ACCENT = '#5b9bd5'
+const LOGIN = 'databricks auth login --host <your workspace URL>'
+const UNREACHABLE =
+  /dial tcp|no such host|connection refused|connection reset|network is unreachable|no route to host|i\/o timeout|tls handshake timeout|context deadline exceeded|client\.timeout|proxyconnect|proxy error|timed? ?out|temporary failure in name resolution|could not resolve host|getaddrinfo|econnrefused|econnreset|etimedout|enotfound/i
+const SIGNED_OUT =
+  /(?:status|code|http)\W{0,3}401\b|\b401 unauthorized|\bunauthorized\b|unauthenticated|not authenticated|not logged in|no credentials|cannot configure default credentials|cannot get access token|(?:invalid|expired) (?:access |refresh |oauth )?token|token (?:is |has )?(?:invalid|expired|not set)|credential was not sent|has no \S+ profile configured|no configuration file found|no profiles configured|cannot load databricks config|databricks auth login/i
 const FONT_SCRIPT =
   'if command -v fc-list >/dev/null 2>&1; then f=$(fc-list ":charset=$1" file | head -n1 | cut -d: -f1); ' +
   'else f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* 2>/dev/null | head -n1); fi; ' +
@@ -244,41 +251,60 @@ function refresh($: EngineInterface): Promise<void> {
   return inflight
 }
 
-async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], tone = 'orange'): Promise<void> {
-  const unique = [...new Set(ids)]
-  if (unique.length === 0) return
+function live(work: Work | null, now: number): work is Work {
+  if (!work) return false
+  return work.until === null ? now - work.since < BUSY_MAX_MS : now < work.until
+}
+
+async function startWork($: EngineInterface, ids: string[], tone: string): Promise<number> {
   const mine = ++generation
   blink?.cancel()
   blink = null
+  const at = await $.clock.now()
+  await patchView($, cur => {
+    const prior = live(cur.work, at) ? cur.work : null
+    const lit = [...new Set([...(prior?.lit ?? []), ...ids])]
+    return { work: { tone, lit, dim: (prior?.dim ?? []).filter(id => !lit.includes(id)), since: at, until: null } }
+  })
+  return mine
+}
+
+async function finishWork($: EngineInterface, mine: number, tone: string, ids: string[] = [], alsoLit: string[] = []): Promise<void> {
+  const unique = [...new Set(ids)]
+  const own = () => generation === mine
   const ex = await get($)
+  const at = await $.clock.now()
   await patch($, cur => {
     const byId = new Map(cur.nodes.map(n => [n.id, n]))
     const open = new Set(cur.expanded)
-    const bright = new Set([...(cur.flashOn ? cur.flash.filter(id => !unique.includes(id)) : []), ...unique])
-    const dim = new Set([...(cur.flashOn ? cur.flashDim : []), ...alsoLit])
-    const tones: Record<string, string> = cur.flashOn ? { ...cur.flashTones } : {}
-    for (const id of [...unique, ...alsoLit]) tones[id] = tone
+    const dim = new Set(alsoLit)
     for (const id of unique) {
       const chain = ancestors(cur.nodes, id, byId)
       if (!chain.some(a => !open.has(a))) continue
       for (const a of chain) {
-        if (!open.has(a)) {
-          dim.add(a)
-          tones[a] ??= tone
-        }
+        if (!open.has(a)) dim.add(a)
         open.add(a)
       }
     }
-    for (const id of bright) dim.delete(id)
+    for (const id of unique) dim.delete(id)
+    const prior = live(cur.work, at) ? cur.work : null
+    const work: Work | null = own()
+      ? unique.length
+        ? { tone, lit: unique, dim: [...dim], since: prior?.since ?? at, until: at + FLASH_MS }
+        : null
+      : prior && unique.length
+        ? { ...prior, lit: [...new Set([...prior.lit, ...unique])], dim: [...new Set([...prior.dim, ...dim])].filter(id => !unique.includes(id) && !prior.lit.includes(id)) }
+        : cur.work
+    if (unique.length === 0) return { work }
     const root = rootOf(cur)
     const away = follow && root !== '' && unique.some(id => id !== root && !ancestors(cur.nodes, id, byId).includes(root))
-    return { flash: [...bright], flashDim: [...dim], flashTones: tones, flashOn: true, expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
+    return { work, expanded: [...open], ...(follow ? { scroll: null } : {}), ...(away ? { root: '' } : {}) }
   })
-  if (generation !== mine) return
+  if (!own() || unique.length === 0) return
   blink = $.clock.after(FLASH_MS, () => {
-    if (generation !== mine) return
+    if (!own()) return
     blink = null
-    quiet(patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
+    quiet(patchView($, () => (own() ? { work: null } : {})))
   })
   if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
 }
@@ -391,9 +417,34 @@ async function hostOf($: EngineInterface, profile: string): Promise<string> {
   hosts.set(profile, host)
   return host
 }
+type Trouble = Onboard['kind'] | ''
+
+class CliError extends Error {
+  constructor(
+    message: string,
+    readonly trouble: Trouble,
+  ) {
+    super(message)
+  }
+}
+
+function troubleOf(text: string): Trouble {
+  return UNREACHABLE.test(text) ? 'unreachable' : SIGNED_OUT.test(text) ? 'signedOut' : ''
+}
+
 async function dbRun($: EngineInterface, tail: string[], profile: string): Promise<string> {
-  const run = await limited(() => $.process.run(['databricks', ...tail, '-o', 'json', ...(profile ? ['-p', profile] : [])], { timeoutMs: 60_000 }))
-  if (run.exitCode !== 0) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || `databricks ${tail.join(' ')} failed`)
+  const argv = ['databricks', ...tail, '-o', 'json', ...(profile ? ['-p', profile] : [])]
+  let run: Awaited<ReturnType<EngineInterface['process']['run']>>
+  try {
+    run = await limited(() => $.process.run(argv, { timeoutMs: 60_000 }))
+  } catch (err) {
+    const text = (err instanceof Error ? err.message : String(err)).trim()
+    throw new CliError(text.split('\n')[0] || 'databricks did not start', /timed? ?out/i.test(text) ? 'unreachable' : 'missing')
+  }
+  if (run.exitCode !== 0) {
+    const text = (run.stderr || run.stdout).trim()
+    throw new CliError(text.split('\n')[0] || `databricks ${tail.join(' ')} failed`, run.exitCode === 127 ? 'missing' : troubleOf(text))
+  }
   if (run.isStdoutTruncated) throw new Error(`databricks ${tail.slice(0, 2).join(' ')}: too much output to show`)
   return run.stdout
 }
@@ -438,17 +489,41 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
     })
   }
 }
+function onboardOf(err: unknown): Onboard | null {
+  return err instanceof CliError && err.trouble ? { kind: err.trouble, line: err.message } : null
+}
+
+function failed(cur: Explorer, target: Target | null, err: unknown): Partial<Explorer> {
+  if (!sameTarget(cur.target, target)) return {}
+  const onboard = onboardOf(err)
+  return onboard ? { onboard } : { status: errorText(err) }
+}
+
+async function probe($: EngineInterface, profile: string): Promise<Onboard | null> {
+  try {
+    await dbRun($, ['current-user', 'me'], profile)
+    return null
+  } catch (err) {
+    return onboardOf(err)
+  }
+}
+
 async function doRefresh($: EngineInterface): Promise<void> {
   const target = (await get($)).target
   if (!target) return
   await patchView($, () => ({ status: 'loading' }))
   treeGen++
   hosts.clear()
+  const onboard = await probe($, target.profile)
+  if (onboard) {
+    await patchView($, cur => (sameTarget(cur.target, target) ? { onboard, status: '' } : {}))
+    return
+  }
   try {
-    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: roots(), expanded: cur.nodes.length ? cur.expanded : [], status: '' } : {}))
+    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: roots(), expanded: cur.nodes.length ? cur.expanded : [], status: '', onboard: null } : {}))
     await expandOpen($)
   } catch (err) {
-    await patch($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+    await patch($, cur => failed(cur, target, err))
   }
 }
 async function listChildren($: EngineInterface, n: TreeNode, profile: string): Promise<TreeNode[]> {
@@ -489,10 +564,10 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
       const kids = await listChildren($, n, target?.profile ?? '')
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
-      await patch($, cur => (gen === treeGen && sameTarget(cur.target, target) && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
+      await patch($, cur => (gen === treeGen && sameTarget(cur.target, target) && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}), ...(cur.onboard ? { onboard: null } : {}) } : {}))
     } catch (err) {
       statusOwner = n.id
-      await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+      await patchView($, cur => failed(cur, target, err))
       return false
     }
     await expandOpen($, n.id)
@@ -517,13 +592,14 @@ function expandNode($: EngineInterface, n: TreeNode): Promise<boolean> {
       if (owned) statusOwner = ''
       await patch($, cur => {
         if (gen !== treeGen || !sameTarget(cur.target, target)) return {}
-        if (!cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)) return owned ? { status: '' } : {}
-        return { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...(owned ? { status: '' } : {}) }
+        const ok = { ...(owned ? { status: '' } : {}), ...(cur.onboard ? { onboard: null } : {}) }
+        if (!cur.nodes.some(x => x.parent === n.id && x.kind === PLACEHOLDER)) return ok
+        return { nodes: cur.nodes.flatMap(x => (x.parent === n.id && x.kind === PLACEHOLDER ? (kids.length ? kids : [emptyMark(n.id)]) : [x])), ...ok }
       })
       return true
     } catch (err) {
       statusOwner = n.id
-      await patchView($, cur => (sameTarget(cur.target, target) ? { status: errorText(err) } : {}))
+      await patchView($, cur => failed(cur, target, err))
       return false
     }
   })().finally(() => loading.delete(key))
@@ -579,18 +655,23 @@ function backgroundOf(result: unknown): string {
 
 type Call = { inv: Invocation; kind: NonNullable<ReturnType<typeof dbKind>> }
 
-async function afterDb($: EngineInterface, calls: Call[], stale: Set<string>, succeeded: boolean): Promise<void> {
+type Lit = { touched: string[]; opened: string[] }
+
+async function afterDb($: EngineInterface, calls: Call[], stale: Set<string>, succeeded: boolean): Promise<Lit> {
+  const none: Lit = { touched: [], opened: [] }
   const fallback = await implicitProfile($)
   const canon = (p: string) => p || fallback || 'DEFAULT'
   const resolved = (inv: Invocation) => dbProfile(inv) || inv.env.DATABRICKS_CONFIG_PROFILE || ''
   const own = calls.filter(c => !c.inv.env.DATABRICKS_HOST && !c.inv.env.DATABRICKS_TOKEN)
   const first = own[0]
-  if (!first) return
+  if (!first) return none
   const current = (await get($)).target
   const want = resolved(first.inv)
   const profile = current && canon(current.profile) === canon(want) ? current.profile : want
   const moved = await point($, { kind: 'databricks', profile }, 'unasked')
-  if (moved || (await get($)).nodes.length === 0) await refresh($)
+  const shown = await get($)
+  if (moved || shown.nodes.length === 0 || shown.onboard) await refresh($)
+  if ((await get($)).onboard) return none
   const mine = own.filter(c => canon(resolved(c.inv)) === canon(profile))
   const prior = await get($)
   const before = new Set(prior.expanded)
@@ -610,18 +691,39 @@ async function afterDb($: EngineInterface, calls: Call[], stale: Set<string>, su
   await pool([...reloads].filter(id => isLoaded(prior.nodes, id) || stale.has(`${activeProfile}|${id}`)), id => reloadNode($, id))
   const fresh = await get($)
   const present = new Set(fresh.nodes.map(n => n.id))
-  const byTone = new Map<string, { touched: string[]; opened: string[] }>()
-  for (const c of mine) {
-    const touched = dbTargets(c.inv).filter(id => present.has(id))
-    const opened = touched.flatMap(id => chainOf(id)).filter(id => !before.has(id) && present.has(id))
-    const tone = DB_TONE[c.kind]
-    const group = byTone.get(tone) ?? { touched: [], opened: [] }
-    group.touched.push(...touched)
-    group.opened.push(...opened)
-    byTone.set(tone, group)
+  if (!succeeded) return none
+  const touched = mine.flatMap(c => dbTargets(c.inv)).filter(id => present.has(id))
+  return { touched, opened: touched.flatMap(id => chainOf(id)).filter(id => !before.has(id) && present.has(id)) }
+}
+
+function toneOf(calls: Call[]): string {
+  const tones = new Set(calls.map(c => DB_TONE[c.kind]))
+  return TONE_RANK.find(t => tones.has(t)) ?? 'orange'
+}
+
+type Line = { icon: [string, string]; title: string } | { text: string; dim?: true } | { label: string; cmd: string }
+
+function onboardBlocks(o: Onboard): Line[][] {
+  const signIn: [string, string] = ['\u{f0342}', '→']
+  if (o.kind === 'missing') {
+    return [
+      [{ icon: ['\u{f05d6}', '⚠'], title: 'Databricks CLI not found' }, { text: 'This pane needs the Databricks CLI (databricks).' }],
+      [
+        { icon: ['\u{f01da}', '↓'], title: 'Install it' },
+        { label: 'macOS or Linux: ', cmd: 'brew tap databricks/tap && brew install databricks' },
+        { label: 'Windows: ', cmd: 'winget install Databricks.DatabricksCLI' },
+      ],
+      [{ icon: signIn, title: 'Then sign in to your workspace' }, { label: '', cmd: LOGIN }],
+      [{ text: "Press ↻ when you're done. Or ask Claude to set it up for you.", dim: true }],
+    ]
   }
-  if (!succeeded) return
-  for (const [tone, group] of byTone) await flash($, group.touched, group.opened, tone)
+  if (o.kind === 'signedOut') {
+    return [
+      [{ icon: ['\u{f0306}', '⚿'], title: 'Not signed in to Databricks' }, { label: '', cmd: LOGIN }],
+      [{ text: "Press ↻ when you're done. Several workspaces? Pick one with -p <profile>.", dim: true }],
+    ]
+  }
+  return [[{ icon: ['\u{f0164}', '⊘'], title: "Can't reach Databricks" }, { text: o.line, dim: true }, { text: 'Check your network or proxy, then press ↻.', dim: true }]]
 }
 
 function changesMembers(args: string[]): boolean {
@@ -641,7 +743,7 @@ export const register: Register = (on, options) => {
     hinted = false
     fellBack = false
     quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
-    await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
+    await patchView($, () => ({ work: null, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Databricks pane; args: [profile]' })
     const ex = await get($)
     activeProfile = ex.target?.profile ?? ''
@@ -672,20 +774,27 @@ export const register: Register = (on, options) => {
     const ex = await get($)
     const have = new Set(ex.nodes.map(n => n.id))
     const marks: Mark[] = calls.map(c => ({ ids: [HEADER, ...dbTargets(c.inv).filter(id => have.has(id))], tone: DB_TONE[c.kind] }))
+    const tone = toneOf(calls)
     await markBusy($, marks)
+    const mine = await startWork($, [...new Set(marks.flatMap(m => m.ids.filter(id => id !== HEADER)))], tone)
     let result: Awaited<ReturnType<typeof next>>
     try {
       result = await next(e)
     } catch (err) {
       await clearBusy($, marks)
+      await finishWork($, mine, tone)
       throw err
     }
     const task = result.deny ? '' : backgroundOf(result.result)
     const stale = new Set(loading.keys())
     const settle = async () => {
       await clearBusy($, marks)
-      if (result.deny || closed || noDock) return
-      await afterDb($, calls, stale, !result.isError)
+      let lit: Lit = { touched: [], opened: [] }
+      try {
+        if (!result.deny && !closed && !noDock) lit = await afterDb($, calls, stale, !result.isError)
+      } finally {
+        await finishWork($, mine, tone, lit.touched, lit.opened)
+      }
     }
     if (task) waiting.set(task, settle)
     else void settle().catch(() => undefined)
@@ -699,6 +808,12 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.message', async ($, e, next) => {
+    if (e.requestId === PANE && typeof e.element === 'string' && e.element.startsWith('onboard-') && e.data && typeof e.data === 'object') {
+      const data = e.data as { press?: unknown; copy?: unknown }
+      const text = typeof data.press === 'string' ? data.press : typeof data.copy === 'string' ? data.copy : ''
+      if (text) await copyOf($, text, e.surface)
+      return {}
+    }
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
     const view = views.get(e.surface) ?? { from: 0, max: 0 }
     const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
@@ -786,16 +901,17 @@ export const register: Register = (on, options) => {
       const b = ex.busy[id]
       return b && now - b.at < BUSY_MAX_MS ? b.tone : ''
     }
-    const brightSet = new Set(ex.flashOn ? ex.flash : [])
-    const dimSet = new Set(ex.flashOn ? ex.flashDim : [])
+    const work = live(ex.work, now) ? ex.work : null
+    const brightSet = new Set(work?.lit ?? [])
+    const dimSet = new Set(work?.dim ?? [])
     const width = Math.max(20, e.props.bodyColumns)
     const rows = visible(ex, SORT, rootOf(ex))
     const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
-    const focusId = follow && ex.flashOn && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
+    const focusId = follow && work && work.lit.length ? (work.lit[work.lit.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
-    const lit = follow && ex.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = follow && work ? rows.findIndex(r => isLit(r.node.id)) : -1
     const fits = lit >= 0 && at - lit < room - 2
     const base = Math.max(0, Math.min(Math.max(0, rows.findIndex(r => r.node.id === ex.cursor)) - Math.floor(room / 2), rows.length - room))
     const inView = lit >= base && at < base + room
@@ -830,7 +946,7 @@ export const register: Register = (on, options) => {
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
       const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
-      const tone = ex.flashTones[n.id] ?? 'orange'
+      const tone = work?.tone ?? 'orange'
       const busy = busyTone(n.id)
       const left: Seg[] = [
         { t: '  '.repeat(r.depth) },
@@ -879,8 +995,8 @@ export const register: Register = (on, options) => {
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
-            {busyTone(HEADER) && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Databricks...', sh: busyTone(HEADER) }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            {work && !ex.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Databricks...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
             ) : (
             <Input
               key="q"
@@ -896,12 +1012,42 @@ export const register: Register = (on, options) => {
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
-        {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
-        {ex.detail.length > 0 && (
+        {ex.onboard && (
+          <Box flexDirection="column" marginTop={1}>
+            {onboardBlocks(ex.onboard).map((block, b) => (
+              <Box key={`block-${b}`} flexDirection="column" marginTop={b > 0 ? 1 : 0}>
+                {block.map((line, i) =>
+                  'title' in line ? (
+                    <Text key={`line-${i}`} wrap="wrap">
+                      <Text color={TITLE_COLOR}>{`${icon(line.icon[0], line.icon[1])} `}</Text>
+                      <Text bold>{line.title}</Text>
+                    </Text>
+                  ) : 'cmd' in line ? (
+                    <Box key={`line-${i}`} marginLeft={2}>
+                      <Client
+                        key={`onboard-${b}-${i}`}
+                        module="./rows.tsx"
+                        props={{ rows: [{ id: line.cmd, left: [...(line.label ? [{ t: line.label }] : []), { t: line.cmd, c: ACCENT }], right: [] }], active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps}
+                      />
+                    </Box>
+                  ) : (
+                    <Box key={`line-${i}`} marginLeft={2}>
+                      <Text wrap="wrap" dimColor={line.dim}>
+                        {line.text}
+                      </Text>
+                    </Box>
+                  ),
+                )}
+              </Box>
+            ))}
+          </Box>
+        )}
+        {!ex.onboard && ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
+        {!ex.onboard && <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />}
+        {!ex.onboard && ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text key={i} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
+              <Text key={String(i)} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
                 {l.replace(/\s+/g, ' ')}
               </Text>
             ))}

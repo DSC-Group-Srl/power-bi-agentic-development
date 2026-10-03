@@ -156,6 +156,8 @@ function put(store: typeof mem, fn: (t: any) => any) {
   store.set(`${PLUGIN}/tree`, { value: fn(cur?.value), version: (cur?.version ?? 0) + 1 })
 }
 
+const shine = (t: any): Record<string, string> => ({ ...t.flashTones, ...(t.work ? Object.fromEntries([...t.work.lit, ...t.work.dim].map((id: string) => [id, t.work.tone])) : {}) })
+
 const app = (dir: string, extra: Record<string, unknown> = {}) => ({ dir, name: dir.split('/').pop(), title: dir.split('/').pop(), cli: 'rayfin', workspace: '', item: '', portal: '', hosting: '', sources: [], error: '', ...extra })
 
 async function seeded($: any, clock: any, root: string, dirs: string[]) {
@@ -340,7 +342,7 @@ test('Bash: a background deploy refreshes when its task-notification arrives, no
   await clock.settle()
   expect(ran.some(a => a[0] === 'find' && a.includes('-maxdepth'))).toBe(true)
   expect((mem.get(`${PLUGIN}/apps`)?.value as any[])[0].item).toBe('22222222-2222-2222-2222-222222222222')
-  expect((mem.get(`${PLUGIN}/tree`)?.value as any).flashTones['/work/app']).toBe('teal')
+  expect(shine(mem.get(`${PLUGIN}/tree`)?.value)['/work/app']).toBe('teal')
 })
 
 test('Bash: a refresh that fails reports it and the scans queued behind it still run', { timeoutMs: 20_000 }, async ($, on) => {
@@ -751,6 +753,64 @@ test('while Claude\'s app command runs, the search row shows marching text in it
   await ui.unmount()
 })
 
+test('working text and row shimmer share one clock: both start with Claude\'s command, both stop when the flash after it ends, in one tone, and a new command restarts them', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const clock = world(on, { HOME: '/home/k' }, ran, [])
+  cwd = '/work/app'
+  found = '/work/app/rayfin/rayfin.yml\0'
+  files = { '/work/app/rayfin/rayfin.yml': 'name: app\n' }
+  await seeded($, clock, '/work', ['/work/app'])
+  const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: PANE, props: paneProps })
+  await clock.settle()
+  const sample = async () => {
+    await ui.redraw()
+    const drawn = await ui.drawn()
+    const find = (key: string) => (n: any): any => (n?.type === 'Client' && n.props?.key === key ? n : (n?.children ?? []).map(find(key)).find(Boolean))
+    const text = find('working')(drawn)?.props.props.rows[0]?.left[0]
+    const segs = ((find('rows')(drawn)?.props.props.rows ?? []) as any[]).flatMap(r => [...r.left, ...r.right])
+    return { text: text ? [text.sh] : [], rows: [...new Set(segs.map(x => x.sh).filter(Boolean))] }
+  }
+  const samples: { at: string; text: string[]; rows: string[] }[] = []
+  const take = async (at: string) => {
+    const s = await sample()
+    samples.push({ at, ...s })
+    return s
+  }
+  onTool = async () => {
+    await take('during deploy')
+  }
+  await $.tool.call({ tool: 'Bash', command: 'rayfin up' } as any)
+  await take('deploy returned')
+  await clock.settle()
+  await take('flash start')
+  await clock.advance(1_500)
+  await take('mid flash')
+  await clock.advance(1_500)
+  await clock.settle()
+  await take('after flash')
+  for (const s of samples) expect({ at: s.at, rows: s.rows }).toEqual({ at: s.at, rows: s.text })
+  expect(samples.map(s => s.text.join())).toEqual(['teal', 'teal', 'teal', 'teal', ''])
+  samples.length = 0
+  onTool = null
+  await $.tool.call({ tool: 'Bash', command: 'rayfin up' } as any)
+  await clock.settle()
+  await clock.advance(2_000)
+  await take('old flash')
+  onTool = async () => {
+    await take('during list')
+  }
+  await $.tool.call({ tool: 'Bash', command: 'rayfin env list' } as any)
+  onTool = null
+  await clock.settle()
+  await take('list returned, nothing lit')
+  await clock.advance(1_000)
+  await clock.settle()
+  await take('past the old flash')
+  for (const s of samples) expect({ at: s.at, rows: s.rows }).toEqual({ at: s.at, rows: s.text })
+  expect(samples.map(s => s.text.join())).toEqual(['teal', 'orange', '', ''])
+  await ui.unmount()
+})
+
 test('auto glyphs use FabricSymbols only when a Nerd Font is installed too', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const clock = world(on, { HOME: '/home/k' }, ran, [])
@@ -877,7 +937,7 @@ test('parsing: &> stays one operator, and text that only mentions the CLI is no 
   await $.tool.call({ tool: 'Bash', command: 'grep -n rayfin up.txt; git log -1 -m "rayfin up"' } as any)
   await clock.settle()
   expect(ran.some(a => a[0] === 'find' && a.includes('-maxdepth'))).toBe(false)
-  expect((mem.get(`${PLUGIN}/tree`)?.value as any).flashTones['/work/app']).toBeUndefined()
+  expect(shine(mem.get(`${PLUGIN}/tree`)?.value)['/work/app']).toBeUndefined()
 })
 
 test('parsing: cd ~ resolves against home for the deploy target, cd "$VAR" resolves to nothing, and the pane never runs its own processes in Claude\'s cwd', { timeoutMs: 20_000 }, async ($, on) => {
@@ -887,7 +947,7 @@ test('parsing: cd ~ resolves against home for the deploy target, cd "$VAR" resol
   found = '/home/k/apps/b/rayfin/rayfin.yml\0/home/k/apps/c/rayfin/rayfin.yml\0'
   files = { '/home/k/apps/b/rayfin/rayfin.yml': 'name: b\n', '/home/k/apps/c/rayfin/rayfin.yml': 'name: c\n' }
   await seeded($, clock, '/home/k/apps', ['/home/k/apps/b', '/home/k/apps/c'])
-  const tones = () => (mem.get(`${PLUGIN}/tree`)?.value as any).flashTones
+  const tones = () => shine(mem.get(`${PLUGIN}/tree`)?.value)
   await $.tool.call({ tool: 'Bash', command: 'cd "$APP" && rayfin up' } as any)
   await clock.settle()
   expect(tones()).toEqual({})
