@@ -458,3 +458,12 @@ test('fontHint off keeps the font hint out of prompts', { timeoutMs: 20_000, opt
   expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('databricks-nf')
   await ui.unmount()
 })
+
+test('a plain glyphs setting is a choice, not a fallback, so no font hint', { timeoutMs: 20_000, options: { glyphs: 'plain' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const w: any = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, w.clock ?? w, 'terminal')
+  expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('databricks-nf')
+  await ui.unmount()
+})

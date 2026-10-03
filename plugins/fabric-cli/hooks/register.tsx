@@ -45,9 +45,8 @@ const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
 let fontHint = true
-let remote = false
 let hinted = false
-let detecting = true
+let fellBack = false
 let follow = true
 let blink: Timer | null = null
 let generation = 0
@@ -180,7 +179,6 @@ async function fontState($: EngineInterface, charset: string, name: string): Pro
 
 async function detectGlyphs($: EngineInterface): Promise<void> {
   if ((await $.env.get('SSH_CONNECTION')) || (await $.env.get('SSH_TTY'))) {
-    remote = true
     detected = 'nerd'
     return
   }
@@ -188,9 +186,8 @@ async function detectGlyphs($: EngineInterface): Promise<void> {
   detected = nerd && (await fontState($, 'f2621', 'FabricSymbols')) === 'ok' ? 'fabric' : nerd ? 'nerd' : 'plain'
 }
 
-async function fontNote($: EngineInterface): Promise<string> {
-  if (!fontHint || hinted || detecting || remote || glyphSetting !== 'auto' || detected === 'fabric') return ''
-  if (!(await $.session.surfaces().catch(() => ['terminal'])).includes('terminal')) return ''
+function fontNote(): string {
+  if (!fontHint || hinted || !fellBack) return ''
   hinted = true
   return 'Tell user once: Fabric pane icons need github.com/data-goblin/fabric-nf plus a Nerd Font. Plugin option fontHint=off disables this.'
 }
@@ -810,8 +807,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
     hinted = false
-    detecting = true
-    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')).finally(() => (detecting = false)))
+    fellBack = false
+    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
     await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Fabric pane; args: [workspace]' })
     const ex = await get($)
@@ -941,7 +938,7 @@ export const register: Register = (on, options) => {
     const ex = await get($)
     const n = ex.nodes.find(x => x.id === ex.selected)
     if (!ex.target || closed || noDock) return next(e)
-    const hint = await fontNote($)
+    const hint = fontNote()
     const context = [...(e.context ?? []), ...(n ? [contextFor(ex, n)] : []), ...(hint ? [hint] : [])]
     return context.length === (e.context ?? []).length ? next(e) : next({ ...e, context })
   })
@@ -955,6 +952,7 @@ export const register: Register = (on, options) => {
       return <Empty />
     }
     const tier = tierFor(e.surface)
+    if (e.surface === 'terminal' && tier === 'plain' && glyphSetting === 'auto') fellBack = true
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
     const ex = await get($)
     const now = await $.clock.now()

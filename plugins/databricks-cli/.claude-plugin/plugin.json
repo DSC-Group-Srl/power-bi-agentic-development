@@ -36,7 +36,7 @@
     "fontHint": {
       "type": "string",
       "title": "Font hint",
-      "description": "on: when the pane falls back from Databricks icons, Claude is told once per session where to get the font. off: no hint.",
+      "description": "on: when auto icons fall back to plain Unicode, Claude is told once per session where to get the fonts. off: no hint.",
       "default": "on",
       "options": [
         "on",
