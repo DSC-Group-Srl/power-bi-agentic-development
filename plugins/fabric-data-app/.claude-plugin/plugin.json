@@ -1,7 +1,7 @@
 {
-  "name": "databricks-cli",
+  "name": "fabric-data-app",
   "version": "26.40.1",
-  "description": "A Databricks pane that follows the databricks CLI: browse workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards, and see what Claude reads or changes.",
+  "description": "A Fabric data app pane that follows the rayfin CLI: browse every Fabric App under your working directory with its data sources and files, and see what Claude reads, deploys or changes.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"
@@ -14,11 +14,11 @@
     "glyphs": {
       "type": "string",
       "title": "Glyphs",
-      "description": "Icon set: auto uses DatabricksSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
+      "description": "Icon set: auto uses FabricSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
       "default": "auto",
       "options": [
         "auto",
-        "databricks",
+        "fabric",
         "nerd",
         "plain"
       ]
@@ -26,7 +26,7 @@
     "follow": {
       "type": "string",
       "title": "Follow Claude",
-      "description": "on: the tree scrolls to what Claude reads, downloads, uploads or changes. off: the view stays where you put it and only your own scrolling moves it; highlights still show.",
+      "description": "on: the tree scrolls to what Claude deploys or changes. off: the view stays where you put it and only your own scrolling moves it; highlights still show.",
       "default": "on",
       "options": [
         "on",
@@ -45,11 +45,11 @@
     }
   },
   "keywords": [
-    "databricks",
-    "databricks-cli",
-    "unity-catalog",
-    "workspace",
+    "microsoft-fabric",
+    "fabric-apps",
+    "rayfin",
+    "data-app",
     "mod",
-    "explorer"
+    "pane"
   ]
 }

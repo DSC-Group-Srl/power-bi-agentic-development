@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "A marketplace for skills and tools for agentic Power BI development.",
-    "version": "26.40.0"
+    "version": "26.40.1"
   },
   "plugins": [
     {
@@ -57,6 +57,11 @@
       "name": "databricks-cli",
       "description": "Browse Databricks workspaces and Unity Catalog in a pane that follows the databricks CLI.",
       "source": "./plugins/databricks-cli"
+    },
+    {
+      "name": "fabric-data-app",
+      "description": "Browse Fabric Apps in a pane that follows the rayfin CLI.",
+      "source": "./plugins/fabric-data-app"
     },
     {
       "name": "custom-visuals",

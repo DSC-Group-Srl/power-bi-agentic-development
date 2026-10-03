@@ -773,3 +773,58 @@ test('a fab command Claude runs in another workspace leaves your selection where
   domainsOn = false
   await ui.unmount()
 })
+
+test('while Claude reads far down the tree, the domain and workspace it sits in stay pinned; the search row says Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: `D:${DOM}` }, { in: 'rows' })
+  await clock.settle()
+  await clock.advance(600)
+  await ui.post({ press: 'D:none' }, { in: 'rows' })
+  await clock.settle()
+  let working = ''
+  onTool = async () => {
+    working = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'fab get "WS50.Workspace/Model.SemanticModel" -q id' } as any)
+  onTool = null
+  expect(working).toContain('Claude is working in Fabric...')
+  await clock.advance(100)
+  const during = (await rowsOf(ui)).rows.map((r: any) => r.id)
+  expect(during).toContain('D:none')
+  expect(during).toContain('W:WS50')
+  await clock.advance(6000)
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('Claude is working')
+  domainsOn = false
+  await ui.unmount()
+})
+
+test('/fabric-pane takes a workspace name with spaces, quoted or not', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await $.command.run({ command: PANE, args: 'My WS', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:My WS')
+  await $.command.run({ command: PANE, args: '"WS02"', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:WS02')
+  await ui.unmount()
+})
+
+test('command -v fab only looks the CLI up, so the pane does not say Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  let drawn = ''
+  onTool = async () => {
+    drawn = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'command -v fab' } as any)
+  onTool = null
+  expect(drawn).not.toContain('Claude is working in Fabric')
+  await ui.unmount()
+})

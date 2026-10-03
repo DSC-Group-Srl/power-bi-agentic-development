@@ -32,6 +32,7 @@ const DATA: Record<string, unknown> = {
 }
 
 const truncated = new Set<string>()
+let onTool: ((e: any) => Promise<void>) | null = null
 const failingDb = new Set<string>()
 let gate: { key: string; wait: Promise<void> } | null = null
 
@@ -79,7 +80,10 @@ function world(on: any, env: Record<string, string>, ran: Ran, copied: string[])
     }
     return ok('')
   })
-  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
+  on('tool.call', async (_$: any, e: any) => {
+    if (onTool) await onTool(e)
+    return { result: { stdout: '', stderr: '' } }
+  })
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
   return clock
 }
@@ -484,5 +488,46 @@ test('a highlight on a row already in view does not scroll the tree', { timeoutM
   const during = await rowsOf(ui)
   expect(JSON.stringify(during.rows.find((r: any) => r.id === 'UC:main.sales.orders'))).toContain('"sh":"purple"')
   expect(during.rows[0].id).toBe(before)
+  await ui.unmount()
+})
+
+test('while Claude reads far down the tree, its catalog and schema stay pinned; the search row says Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  for (const id of ['S:catalog', 'UC:main', 'UC:main.sales', 'S:jobs']) {
+    await clock.advance(600)
+    await ui.post({ press: id }, { in: 'rows' })
+    await clock.settle()
+  }
+  let working = ''
+  onTool = async () => {
+    working = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'databricks jobs get 150' } as any)
+  onTool = null
+  expect(working).toContain('Claude is working in Databricks...')
+  await clock.advance(100)
+  const during = (await rowsOf(ui)).rows.map((r: any) => r.id)
+  expect(during).toContain('S:jobs')
+  await clock.advance(6000)
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('Claude is working')
+  await ui.unmount()
+})
+
+test('command -v databricks only looks the CLI up, so the pane does not say Claude is working', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  let drawn = ''
+  onTool = async () => {
+    drawn = JSON.stringify(await ui.drawn())
+  }
+  await $.tool.call({ tool: 'Bash', command: 'command -v databricks' } as any)
+  onTool = null
+  expect(drawn).not.toContain('Claude is working in Databricks')
   await ui.unmount()
 })

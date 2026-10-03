@@ -76,6 +76,7 @@ claude plugin install custom-visuals@power-bi-agentic-development
 claude plugin install fabric-cli@power-bi-agentic-development
 claude plugin install fabric-admin@power-bi-agentic-development
 claude plugin install databricks-cli@power-bi-agentic-development
+claude plugin install fabric-data-app@power-bi-agentic-development
 claude plugin install etl@power-bi-agentic-development
 ```
 
@@ -241,6 +242,7 @@ Hook checks can be individually toggled via config files. Set any check to `fals
 | Skill | [`modifying-theme-json`](plugins/reports/skills/modifying-theme-json/) | Design, enforce, audit, and validate report themes through the `pbir` CLI |
 | Skill | [`review-report`](plugins/reports/skills/review-report/) | Actionable feedback on report quality, usage, and effectiveness; usage analysis, health checks |
 | Skill | [`pbir-cli`](plugins/reports/skills/pbir-cli/) | Programmatic report manipulation via the [`pbir` CLI](https://github.com/maxanatsko/pbir.tools), including live Power BI Desktop refresh and page screenshots |
+| Mod | [`/report-pane`](plugins/reports/hooks/) | Report pane: pages, visuals, bookmarks, filters and report measures of the `.Report` folder as a tree that follows `pbir`, with live highlights of what Claude reads or changes. Optional arg: a path to a `.Report` folder. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
 | Agent | [`deneb-reviewer`](plugins/reports/agents/deneb-reviewer.agent.md) | Review Deneb visual specs for Vega/Vega-Lite syntax and conventions |
 | Agent | [`svg-reviewer`](plugins/reports/agents/svg-reviewer.agent.md) | Review SVG DAX measures for syntax and design quality |
 | Agent | [`r-reviewer`](plugins/reports/agents/r-reviewer.agent.md) | Review R visual scripts (ggplot2) for Power BI conventions |
@@ -318,6 +320,15 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 </details>
 
 <details>
+<summary><strong>fabric-data-app</strong> &ensp; Fabric data app pane that follows the rayfin CLI</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Mod | [`/data-app-pane`](plugins/fabric-data-app/hooks/) | Data app pane: every Fabric App (`rayfin/rayfin.yml`) under the working directory with its data sources, deploy state and files, as a tree that follows `rayfin`, with live highlights of what Claude deploys or changes. Optional arg: a folder. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
+
+</details>
+
+<details>
 <summary><strong>etl</strong> &ensp; Inspect, query, and transform lakehouse data with Spark, Livy, and DuckDB</summary>
 
 | Type | Name | Description |
@@ -333,7 +344,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 > [!WARNING]
 > Mods only work in Claude Code 2.1.287 or newer. In other tools, such as Copilot CLI, the panes do not appear.
 
-Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant or Databricks workspace as a tree beside the conversation, highlight what Claude reads, downloads, uploads or changes through the CLI, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
+Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant, Databricks workspace, Power BI report or Fabric data apps as a tree beside the conversation, highlight what Claude reads, downloads, uploads, deploys or changes through the CLI, say when Claude is working, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
 
 ### Fabric pane
 
@@ -347,10 +358,22 @@ Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant or
 
 <img src="media/mods/databricks-pane.gif" alt="The Databricks pane highlighting a table Claude reads" width="720">
 
+### Report pane
+
+`/report-pane` from the `reports` plugin follows `pbir`: pages, visuals, bookmarks, filters and report measures of a `.Report` folder.
+
+<img src="media/mods/report-pane.gif" alt="The report pane highlighting a visual Claude reads" width="720">
+
+### Data app pane
+
+`/data-app-pane` from the `fabric-data-app` plugin follows `rayfin`: every Fabric App under the working directory, its data sources, deploy state and files.
+
+<img src="media/mods/data-app-pane.gif" alt="The data app pane highlighting an app Claude deploys" width="720">
+
 ### Setup
 
-- **Layout:** the sidebar needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide. In the default layout or tmux the panes stay hidden and their command tells you how to switch. In a fullscreen session a pane opens by itself on Claude's first `fab` or `databricks` command
-- **Icons:** install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) or [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) together with a Nerd Font, then restart the terminal. Without them the panes use a Nerd Font alone, then plain Unicode. Auto detection covers Linux and macOS; on Windows set the `glyphs` option
+- **Layout:** the sidebar needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide. In the default layout or tmux the panes stay hidden and their command tells you how to switch. In a fullscreen session the Fabric, Databricks and report panes open by themselves on Claude's first `fab`, `databricks` or `pbir` command, and the data app pane when the working directory holds a Fabric App
+- **Icons:** install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) (Fabric, report and data app panes) or [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) together with a Nerd Font, then restart the terminal. Without them the panes use a Nerd Font alone, then plain Unicode. Auto detection covers Linux and macOS; on Windows set the `glyphs` option
 - **Options:** `glyphs` forces an icon set; `follow` (Follow Claude) decides whether the tree scrolls to what Claude touches; `fontHint` turns off the one-line install hint Claude gets once per session when the icons fall back to plain Unicode
 
 ## Useful stuff

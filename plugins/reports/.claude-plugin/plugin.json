@@ -1,13 +1,48 @@
 {
   "name": "reports",
-  "version": "26.40.0",
-  "description": "Build, format, optimize, and review interactive Power BI reports.",
+  "version": "26.40.1",
+  "description": "Build, format, optimize, and review interactive Power BI reports, with a report pane that follows the pbir CLI and shows what Claude reads and changes.",
   "author": {
     "name": "Kurt Buhler",
     "url": "https://data-goblins.com"
   },
   "homepage": "https://data-goblins.com",
   "repository": "https://github.com/data-goblin/power-bi-agentic-development",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "glyphs": {
+      "type": "string",
+      "title": "Glyphs",
+      "description": "Icon set: auto uses FabricSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "fabric",
+        "nerd",
+        "plain"
+      ]
+    },
+    "follow": {
+      "type": "string",
+      "title": "Follow Claude",
+      "description": "on: the tree scrolls to what Claude reads or changes through pbir or PBIR edits. off: the view stays where you put it and only your own scrolling moves it; highlights still show, and a closed folder lights up instead of opening.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "fontHint": {
+      "type": "string",
+      "title": "Font hint",
+      "description": "on: when auto icons fall back to plain Unicode, Claude is told once per session where to get the fonts. off: no hint.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    }
+  },
   "license": "GPL-3.0",
   "keywords": [
     "power-bi",
