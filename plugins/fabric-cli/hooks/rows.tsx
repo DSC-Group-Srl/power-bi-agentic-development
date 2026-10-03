@@ -85,7 +85,7 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
   const draw = (s: Seg, k: number) => {
     if (s.spin) {
       return (
-        <Text key={k} color={s.c} bold={s.b}>
+        <Text key={String(k)} color={s.c} bold={s.b}>
           {s.t + (frames[state.phase % frames.length] ?? '')}
         </Text>
       )
@@ -93,23 +93,23 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     const palette = s.sh ? (s.dim ? props.tones[s.sh]?.dim : props.tones[s.sh]?.bright) : undefined
     if (!palette) {
       return (
-        <Text key={k} color={s.c} backgroundColor={s.bg} bold={s.b} strikethrough={s.s} italic={s.i}>
+        <Text key={String(k)} color={s.c} backgroundColor={s.bg} bold={s.b} strikethrough={s.s} italic={s.i}>
           {s.t}
         </Text>
       )
     }
     if (s.one) {
       return (
-        <Text key={k} color={shimmer(-1, state.phase, s.t.length, palette)}>
+        <Text key={String(k)} color={shimmer(-1, state.phase, s.t.length, palette)}>
           {s.t}
         </Text>
       )
     }
     const chars = [...s.t]
     return (
-      <Text key={k} bold={s.b}>
+      <Text key={String(k)} bold={s.b}>
         {chars.map((ch, i) => (
-          <Text key={i} color={shimmer(i, state.phase, chars.length, palette)}>{ch}</Text>
+          <Text key={String(i)} color={shimmer(i, state.phase, chars.length, palette)}>{ch}</Text>
         ))}
       </Text>
     )
