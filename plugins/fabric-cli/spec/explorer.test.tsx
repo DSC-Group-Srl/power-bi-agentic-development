@@ -801,3 +801,16 @@ test('while Claude reads far down the tree, the domain and workspace it sits in 
   domainsOn = false
   await ui.unmount()
 })
+
+test('/fabric-pane takes a workspace name with spaces, quoted or not', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  await $.command.run({ command: PANE, args: 'My WS', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:My WS')
+  await $.command.run({ command: PANE, args: '"WS02"', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).active).toBe('W:WS02')
+  await ui.unmount()
+})

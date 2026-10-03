@@ -553,6 +553,11 @@ function contextFor(ex: Explorer, n: TreeNode): string {
   ].join('\n')
 }
 
+function wholeArg(args: string | undefined): string {
+  const raw = (args ?? '').trim()
+  return /^["']/.test(raw) ? (tokenize(raw)[0] ?? '') : raw
+}
+
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
@@ -582,7 +587,7 @@ export const register: Register = (on, options) => {
     await detectGlyphs($)
     const cwd = await cwdOf($)
     let target = (await get($)).target
-    const [first] = tokenize(e.args ?? '')
+    const first = wholeArg(e.args)
     if (first) target = { kind: 'local', path: join(cwd, first.replace(/\/$/, '')) }
     await point($, target, 'asked', Boolean(first))
     quiet(refresh($))

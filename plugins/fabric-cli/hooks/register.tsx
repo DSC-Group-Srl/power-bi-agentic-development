@@ -799,6 +799,11 @@ async function afterQueries($: EngineInterface, asked: { ids: string[]; workspac
   await flash($, ids, [], FAB_TONE.read)
 }
 
+function wholeArg(args: string | undefined): string {
+  const raw = (args ?? '').trim()
+  return /^["']/.test(raw) ? (tokenize(raw)[0] ?? '') : raw
+}
+
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
@@ -821,7 +826,7 @@ export const register: Register = (on, options) => {
     if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric pane shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-pane.' }
     if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Fabric pane shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-pane.' }
     noDock = false
-    const [workspace] = tokenize(e.args ?? '')
+    const workspace = wholeArg(e.args)
     await point($, { kind: 'fabric' }, 'asked', true)
     await refresh($)
     if (workspace) await reveal($, workspace.replace(/\.Workspace$/i, ''), true)

@@ -895,3 +895,14 @@ test('a pane that cannot open while Claude works or a session starts leaves no r
   expect(state().selected).toBe('R/pages/p1')
   await ui.unmount()
 })
+
+test('/report-pane takes a report path with spaces, quoted or not', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const clock = world(on, { HOME: '/home/k' }, ran)
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const plain = JSON.stringify(await $.command.run({ command: PANE, args: 'KPI Cards.Report', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any))
+  expect(plain).toContain('KPI Cards')
+  const quoted = JSON.stringify(await $.command.run({ command: PANE, args: '"My Sales.Report"', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any))
+  expect(quoted).toContain('My Sales')
+})

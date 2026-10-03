@@ -59,6 +59,11 @@
       "source": "./plugins/databricks-cli"
     },
     {
+      "name": "fabric-data-app",
+      "description": "Browse Fabric Apps in a pane that follows the rayfin CLI.",
+      "source": "./plugins/fabric-data-app"
+    },
+    {
       "name": "custom-visuals",
       "description": "Build Deneb, Python, R, SVG, and pbiviz custom visuals for Power BI.",
       "source": "./plugins/custom-visuals"
