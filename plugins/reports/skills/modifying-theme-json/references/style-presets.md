@@ -74,7 +74,7 @@ pbir theme push-visual "Report.Report/Page.Page/Table.Visual" --preset "Compact"
 pbir theme validate "Report.Report"
 ```
 
-- `theme set-formatting` cannot write a named preset: its second path segment is a state id, so `tableEx.Compact.grid.rowPadding` writes a `{"$id": "Compact"}` entry into the default style instead of a preset
-- Treat any `pbir theme validate` error under `visualStyles.<type>.<preset>` as a failed push. If it reports `expr` literals or a `stylePreset` inside the preset, stop and report the missing `pbir` capability; do not hand-edit the theme
+- pbir-cli 1.0: `pbir theme set-formatting "Report.Report" "tableEx.Compact.grid.rowPadding" --value 2` writes the named preset, and card states go in `--state`. In 0.9.x the second path segment is a state id, so the same path writes a `{"$id": "Compact"}` entry into the default style instead
+- pbir-cli 1.0: `push-visual` writes plain theme values and leaves the visual's `stylePreset` out of a named preset. In 0.9.x it copies `expr` literals and `stylePreset`, which `pbir theme validate` rejects; treat that as a failed push and do not hand-edit the theme
 
 Reload the report in Desktop and check the **Style presets** dropdown on one visual of the type before relying on the presets.
