@@ -64,7 +64,7 @@ export function tokenize(command: string): string[] {
       cur = ''
       has = false
     } else if (ch === '>' || ch === '<') {
-      let op = /^\d+$/.test(cur) && !has ? cur : /^\d+$/.test(cur) ? cur : ''
+      let op = /^\d+$/.test(cur) || (cur === '&' && !has) ? cur : ''
       if (!op && (has || cur)) out.push(cur)
       op += ch
       while (command[i + 1] === '>' || command[i + 1] === '&' || /\d/.test(command[i + 1] ?? '')) {

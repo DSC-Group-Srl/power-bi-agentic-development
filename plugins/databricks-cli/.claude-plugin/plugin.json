@@ -14,7 +14,7 @@
     "glyphs": {
       "type": "string",
       "title": "Glyphs",
-      "description": "Icon set: auto uses DatabricksSymbols NF when the font is installed and your terminal started after it was installed, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Pick one to force it.",
+      "description": "Icon set: auto uses DatabricksSymbols NF when it and a Nerd Font are installed and your terminal started after they were, else Nerd Font, else plain Unicode; Nerd Font over SSH, plain Unicode in the desktop app. Auto detection covers Linux and macOS; on Windows pick one to force it.",
       "default": "auto",
       "options": [
         "auto",
@@ -27,6 +27,16 @@
       "type": "string",
       "title": "Follow Claude",
       "description": "on: the tree scrolls to what Claude reads, downloads, uploads or changes. off: the view stays where you put it and only your own scrolling moves it; highlights still show.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "fontHint": {
+      "type": "string",
+      "title": "Font hint",
+      "description": "on: when the pane falls back from Databricks icons, Claude is told once per session where to get the font. off: no hint.",
       "default": "on",
       "options": [
         "on",

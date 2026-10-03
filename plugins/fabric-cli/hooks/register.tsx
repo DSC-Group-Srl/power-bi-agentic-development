@@ -5,7 +5,7 @@ import { glyph, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
-import { FAB_TONE, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
+import { FAB_TONE, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
@@ -44,6 +44,10 @@ let lastPress = { key: '', at: 0 }
 const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
+let fontHint = true
+let remote = false
+let hinted = false
+let detecting = true
 let follow = true
 let blink: Timer | null = null
 let generation = 0
@@ -176,10 +180,19 @@ async function fontState($: EngineInterface, charset: string, name: string): Pro
 
 async function detectGlyphs($: EngineInterface): Promise<void> {
   if ((await $.env.get('SSH_CONNECTION')) || (await $.env.get('SSH_TTY'))) {
+    remote = true
     detected = 'nerd'
     return
   }
-  detected = (await fontState($, 'f2621', 'FabricSymbols')) === 'ok' ? 'fabric' : (await fontState($, 'f04eb', 'Nerd')) === 'ok' ? 'nerd' : 'plain'
+  const nerd = (await fontState($, 'f04eb', 'Nerd')) === 'ok'
+  detected = nerd && (await fontState($, 'f2621', 'FabricSymbols')) === 'ok' ? 'fabric' : nerd ? 'nerd' : 'plain'
+}
+
+async function fontNote($: EngineInterface): Promise<string> {
+  if (!fontHint || hinted || detecting || remote || glyphSetting !== 'auto' || detected === 'fabric') return ''
+  if (!(await $.session.surfaces().catch(() => ['terminal'])).includes('terminal')) return ''
+  hinted = true
+  return 'Tell user once: Fabric pane icons need github.com/data-goblin/fabric-nf plus a Nerd Font. Plugin option fontHint=off disables this.'
 }
 
 function tierFor(surface: string): Tier {
@@ -288,7 +301,7 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
   blink = $.clock.after(FLASH_MS, () => {
     if (generation !== mine) return
     blink = null
-    void patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {}))
+    quiet(patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
   })
   if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
 }
@@ -382,12 +395,18 @@ async function openWeb($: EngineInterface, ex: Explorer, n: TreeNode): Promise<v
   else $.ui.toast('no Fabric link for this object')
 }
 
-let fabContext: { bin: string; env: Record<string, string>; cwd: string } = { bin: 'fab', env: {}, cwd: '' }
+let fabContext: { bin: string; env: Record<string, string> } = { bin: 'fab', env: {} }
 let treeGen = 0
 
 function contextOf(inv: { bin: string; env: Record<string, string>; cwd: string }): typeof fabContext {
   const env = Object.fromEntries(Object.entries(inv.env).filter(([k]) => /^(FAB_|AZURE_|IDENTITY_|REQUESTS_CA_BUNDLE$|HTTPS?_PROXY$|NO_PROXY$)/i.test(k)))
-  return { bin: inv.bin.includes('/') ? inv.bin : 'fab', env, cwd: inv.cwd }
+  return { bin: binOf(inv.bin, inv.cwd), env }
+}
+
+function binOf(bin: string, cwd: string): string {
+  if (!bin.includes('/') || /[~$`]/.test(bin)) return 'fab'
+  if (bin.startsWith('/') || /^[A-Za-z]:\//.test(bin)) return bin
+  return cwd.startsWith('/') && !/[~$`]/.test(cwd) ? join(cwd, bin) : 'fab'
 }
 
 function identityOf(env: Record<string, string>): string {
@@ -405,7 +424,6 @@ async function fabLs($: EngineInterface, path?: string): Promise<string> {
     $.process.run([ctx.bin, 'ls', where, '-l', '--output_format', 'json'], {
       timeoutMs: 60_000,
       ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}),
-      ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
     }),
   )
   if (run.exitCode !== 0) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || 'fab ls failed')
@@ -460,30 +478,44 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
 async function fabRaw($: EngineInterface, args: string[]): Promise<string> {
   const ctx = fabContext
   const run = await limited(() =>
-    $.process.run([ctx.bin, ...args], { timeoutMs: 60_000, ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}), ...(ctx.cwd ? { cwd: ctx.cwd } : {}) }),
+    $.process.run([ctx.bin, ...args], { timeoutMs: 60_000, ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}) }),
   )
   if (run.exitCode !== 0 || run.isStdoutTruncated) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || `fab ${args[0]} failed`)
   return run.stdout
 }
 
+function quiet(p: Promise<unknown>): void {
+  void p.catch(() => undefined)
+}
+
 const domainOf = new Map<string, string>()
 const domainName = new Map<string, string>()
 
+function jsonOf<T>(text: string): T | null {
+  try {
+    return JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as T
+  } catch {
+    return null
+  }
+}
+
 async function loadDomains($: EngineInterface): Promise<void> {
-  const [ws, names] = await Promise.all([fabRaw($, ['api', 'workspaces']).catch(() => ''), fabRaw($, ['ls', '.domains', '-l', '--output_format', 'json']).catch(() => '')])
-  try {
-    const body = JSON.parse(ws.slice(Math.max(0, ws.indexOf('{')))) as { text?: { value?: { id?: string; domainId?: string }[] } }
-    domainOf.clear()
-    for (const w of body.text?.value ?? []) if (w.id && w.domainId) domainOf.set(w.id.toLowerCase(), w.domainId.toLowerCase())
-  } catch {
-    domainOf.clear()
+  const names = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', '.domains', '-l', '--output_format', 'json']).catch(() => ''))
+  domainName.clear()
+  for (const d of names?.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
+  const found = new Map<string, string>()
+  let token = ''
+  for (let page = 0; domainName.size > 0 && page < 50; page++) {
+    const body = jsonOf<{ status_code?: number; text?: { value?: { id?: string; domainId?: string }[]; continuationToken?: string } }>(
+      await fabRaw($, ['api', token ? `workspaces?continuationToken=${encodeURIComponent(token)}` : 'workspaces']).catch(() => ''),
+    )
+    if (!body || (body.status_code && body.status_code >= 400)) break
+    for (const w of body.text?.value ?? []) if (w.id && w.domainId && domainName.has(w.domainId.toLowerCase())) found.set(w.id.toLowerCase(), w.domainId.toLowerCase())
+    token = body.text?.continuationToken ?? ''
+    if (!token) break
   }
-  try {
-    const list = JSON.parse(names.slice(Math.max(0, names.indexOf('{')))) as { result?: { data?: { name?: string; id?: string }[] } }
-    for (const d of list.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
-  } catch {
-    return
-  }
+  domainOf.clear()
+  for (const [w, d] of found) domainOf.set(w, d)
 }
 
 function grouped(nodes: TreeNode[], on: boolean): TreeNode[] {
@@ -612,7 +644,7 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
 async function reveal($: EngineInterface, workspace: string): Promise<void> {
   const n = wsNode((await get($)).nodes, workspace)
   if (!n) return
-  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, n.id])] }))
+  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, ...ancestors(cur.nodes, n.id), n.id])], cursor: n.id }))
   await expandFabric($, n)
 }
 
@@ -646,9 +678,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
     return { expanded: [...open], cursor: n.id, selected: n.path ? n.id : cur.selected }
   })
   if (!isLeaf && (await expandFabric($, n))) await expandOpen($, n.id)
-  const detail = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
-  const model = modelOf(n)
-  if (model) detail.push(`model explorer: /model-explorer "${model.server}" "${model.database}"`)
+  const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
 }
 
@@ -775,14 +805,17 @@ async function afterQueries($: EngineInterface, asked: { ids: string[]; workspac
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
+  fontHint = options?.fontHint !== 'off'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
-    void detectGlyphs($).then(() => $.ui.invalidate('ui.render'))
+    hinted = false
+    detecting = true
+    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')).finally(() => (detecting = false)))
     await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Fabric pane; args: [workspace]' })
     const ex = await get($)
-    if (ex.target) void openPane($, { id: PANE, title: titleFor(ex.target) })
+    if (ex.target) quiet(openPane($, { id: PANE, title: titleFor(ex.target) }))
     return next(e)
   })
 
@@ -907,8 +940,10 @@ export const register: Register = (on, options) => {
     }
     const ex = await get($)
     const n = ex.nodes.find(x => x.id === ex.selected)
-    if (!n || !ex.target || closed || noDock) return next(e)
-    return next({ ...e, context: [...(e.context ?? []), contextFor(ex, n)] })
+    if (!ex.target || closed || noDock) return next(e)
+    const hint = await fontNote($)
+    const context = [...(e.context ?? []), ...(n ? [contextFor(ex, n)] : []), ...(hint ? [hint] : [])]
+    return context.length === (e.context ?? []).length ? next(e) : next({ ...e, context })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
@@ -1001,16 +1036,16 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
         <Box flexDirection="row">
-          {domainOf.size > 0 && <Button key="domains" plain dimColor={ex.byDomain === false} label={`${icon('\u{f0ac}', '◇')} `} onPress={() => void toggleDomains($)} />}
+          {domainOf.size > 0 && <Button key="domains" plain dimColor={ex.byDomain === false} label={`${icon('\u{f0ac}', '◇')} `} onPress={() => quiet(toggleDomains($))} />}
           <Box flexGrow={1} flexShrink={1}>
             <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
           </Box>
           <Box flexDirection="row" gap={2}>
-            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => void goUp($)} />}
-            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => void goHome($)} />}
-            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => void refresh($)} />
-            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patchView($, () => ({ expanded: [] }))} />
-            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patchView($, () => ({ selected: '', detail: [] }))} />}
+            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
+            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
+            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
+            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
+            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
             <Text> </Text>
           </Box>
         </Box>
@@ -1023,25 +1058,25 @@ export const register: Register = (on, options) => {
               submitLabel="jump"
               autoFocus
               value={ex.query}
-              onInput={(v: string) => void patchView($, () => ({ query: v }))}
-              onSubmit={(v: string) => void patch($, cur => jumpTo(cur, v))}
+              onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
+              onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
             />
           </Box>
-          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patchView($, () => ({ query: '' }))} /> : null}
+          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#353a45', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text dimColor={i > 0} bold={i === 0} wrap="truncate-end">
+              <Text key={i} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
                 {l.replace(/\s+/g, ' ')}
               </Text>
             ))}
             {sel && (
               <Box flexDirection="row" gap={2}>
-                {modelOf(sel) && <Button key="open" plain label={`${icon('\u{f0379}', '↗')} open in te`} onPress={() => void openLocal($, ex, sel)} />}
-                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Fabric`} onPress={() => void openWeb($, ex, sel)} />}
+                {modelOf(sel) && <Button key="open" plain label={`${icon('\u{f0379}', '↗')} open in te`} onPress={() => quiet(openLocal($, ex, sel))} />}
+                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Fabric`} onPress={() => quiet(openWeb($, ex, sel))} />}
               </Box>
             )}
           </Box>

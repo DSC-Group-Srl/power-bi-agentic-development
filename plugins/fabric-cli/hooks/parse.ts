@@ -66,7 +66,7 @@ export function tokenize(command: string): string[] {
       cur = ''
       has = false
     } else if (ch === '>' || ch === '<') {
-      let op = /^\d+$/.test(cur) && !has ? cur : /^\d+$/.test(cur) ? cur : ''
+      let op = /^\d+$/.test(cur) || (cur === '&' && !has) ? cur : ''
       if (!op && (has || cur)) out.push(cur)
       op += ch
       while (command[i + 1] === '>' || command[i + 1] === '&' || /\d/.test(command[i + 1] ?? '')) {
@@ -454,6 +454,14 @@ function flagOf(args: string[], names: string[]): string {
   return ''
 }
 
+export function decoded(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
 export type Query = { workspace: string; model: string; database: string; report: string }
 
 export function queryOf(inv: Invocation): Query | null {
@@ -462,7 +470,7 @@ export function queryOf(inv: Invocation): Query | null {
     const server = flagOf(inv.args, ['-s', '--server'])
     const ws = server.match(/^powerbi:\/\/[^/]+\/v1\.0\/[^/]+\/(.+)$/i)?.[1]
     const model = flagOf(inv.args, ['-d', '--database'])
-    return ws && model ? { ...none, workspace: decodeURIComponent(ws), model } : null
+    return ws && model ? { ...none, workspace: decoded(ws), model } : null
   }
   if (inv.tool === 'pbir' && inv.args[0] === 'model' && inv.args.some(a => a === '-q' || a === '--query' || a.startsWith('--query='))) {
     const report = inv.args[1] ?? ''
@@ -477,5 +485,5 @@ export function queryOf(inv: Invocation): Query | null {
 
 export function modelFromConnection(text: string): { workspace: string; model: string } | null {
   const m = text.match(/Data Source=\\?"?powerbi:\/\/[^/]+\/v1\.0\/[^/]+\/([^";\\]+)\\?"?;\s*initial catalog=\\?"?([^";\\]+)/i)
-  return m?.[1] && m[2] ? { workspace: decodeURIComponent(m[1].trim()), model: m[2].trim() } : null
+  return m?.[1] && m[2] ? { workspace: decoded(m[1].trim()), model: m[2].trim() } : null
 }

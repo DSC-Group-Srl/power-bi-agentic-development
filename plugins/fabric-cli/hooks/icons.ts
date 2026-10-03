@@ -2,7 +2,7 @@ import type { TreeNode } from '../types'
 import { FAB_ITEMS } from './icon-data'
 
 type Rgb = [number, number, number]
-type Icon = { fabric: number; nerd: string; rgb: Rgb | null; plain?: string }
+type Icon = { fabric: number; nerd: string; rgb: Rgb | null }
 export type Tier = 'fabric' | 'nerd' | 'plain'
 
 const GLYPH_DIM: Rgb = [0x6e, 0x6e, 0x7a]
@@ -23,18 +23,16 @@ function hex(rgb: Rgb | null): string | undefined {
   return rgb ? '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('') : undefined
 }
 
-const PLAIN: Record<string, string> = {
-  table: '▦', 'calc group': '◈', column: '│', 'calc column': '┆', measure: 'Σ', hierarchy: '≡', level: '·',
-  partition: '◫', 'calc item': '◇', folder: '■', expression: 'ƒ', role: '◉', perspective: '◎', relationship: '↔',
-  workspace: '◫', 'fabric folder': '■', report: '▣', page: '□', visual: '▥', reportfilter: '▿', pagefilter: '▿',
-  visualfilter: '▿', bookmark: '⚑', theme: '◐', 'data role': '◦', field: '·', 'ext measure': 'Σ', 'semantic model': '◆',
-  SemanticModel: '◆', group: '■',
+const PLAIN_ITEMS: Record<string, string> = {
+  SemanticModel: '◆', Report: '▣', PaginatedReport: '▤', Dashboard: '▦', KQLDashboard: '▦', Lakehouse: '≋', Warehouse: '▥',
+  SQLEndpoint: '▥', SQLDatabase: '▥', Datamart: '▥', Notebook: '≡', SparkJobDefinition: '∗', DataPipeline: '⇉', CopyJob: '⇉',
+  MountedDataFactory: '⇉', Dataflow: '⇶', Eventhouse: '◎', KQLDatabase: '◎', KQLQueryset: '⌕', Eventstream: '≈',
+  Environment: '◌', MLExperiment: '∴', MLModel: '∷', MirroredCatalog: '◑', MirroredDatabase: '◑', MirroredWarehouse: '◑',
+  DataAgent: '◈', OperationsAgent: '◈', Ontology: '⋔', UserDataFunction: 'ƒ', VariableLibrary: '⊞', AppBackend: '▢', Apps: '▢', OrgApp: '▢',
 }
 
-let current: { tier: Tier; kind: string } = { tier: 'nerd', kind: '' }
-
-function pick(icon: Icon, tier: Tier): Glyph {
-  if (tier === 'plain') return { char: icon.plain ?? PLAIN[current.kind] ?? '•', color: hex(icon.rgb) }
+function pick(icon: Icon, tier: Tier, plain: string): Glyph {
+  if (tier === 'plain') return { char: plain, color: hex(icon.rgb) }
   return { char: tier === 'fabric' && icon.fabric ? String.fromCodePoint(icon.fabric) : icon.nerd, color: hex(icon.rgb) }
 }
 
@@ -82,18 +80,17 @@ function item(type: string): Icon {
 }
 
 export function glyph(n: TreeNode, tier: Tier): Glyph {
-  current = { tier, kind: n.kind }
-  const fabricFont: Tier = tier
   if (n.kind === 'placeholder' || n.kind === 'empty') return { char: n.kind === 'empty' ? '∅' : '…', color: hex(GLYPH_DIM) }
-  if (n.kind === 'workspace') return { ...pick({ fabric: 0xf203e, nerd: '\u{f0253}', rgb: GLYPH_DIM }, fabricFont), label: hex(WORKSPACE) }
-  if (n.kind === 'fabric folder') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, fabricFont)
-  if (n.kind === 'domain') return { ...pick({ fabric: 0, nerd: '\u{f0ac}', rgb: [196, 181, 253] }, fabricFont), label: hex([221, 214, 254]) }
-  if (n.kind === 'lakehouse folder' || n.kind === 'onelake folder' || n.kind === 'onelake dir' || n.kind === 'onelake schema') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, fabricFont)
-  if (n.kind === 'lakehouse table') return pick({ fabric: 0xf2621, nerd: '\u{f04eb}', rgb: [69, 137, 224] }, fabricFont)
-  if (n.kind === 'onelake file' || n.kind === 'onelake shortcut') return pick({ fabric: 0, nerd: n.kind === 'onelake shortcut' ? '\u{f0337}' : '\u{f0214}', rgb: GLYPH_DIM }, fabricFont)
+  if (n.kind === 'workspace') return { ...pick({ fabric: 0xf203e, nerd: '\u{f0253}', rgb: GLYPH_DIM }, tier, '◫'), label: hex(WORKSPACE) }
+  if (n.kind === 'fabric folder') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, tier, '■')
+  if (n.kind === 'domain') return { ...pick({ fabric: 0, nerd: '\u{f0ac}', rgb: [196, 181, 253] }, tier, '◇'), label: hex([221, 214, 254]) }
+  if (n.kind === 'lakehouse folder' || n.kind === 'onelake folder' || n.kind === 'onelake dir' || n.kind === 'onelake schema') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, tier, '■')
+  if (n.kind === 'lakehouse table') return pick({ fabric: 0xf2621, nerd: '\u{f04eb}', rgb: [69, 137, 224] }, tier, '▦')
+  if (n.kind === 'onelake shortcut') return pick({ fabric: 0, nerd: '\u{f0337}', rgb: GLYPH_DIM }, tier, '↪')
+  if (n.kind === 'onelake file') return pick({ fabric: 0, nerd: '\u{f0214}', rgb: GLYPH_DIM }, tier, '▫')
   if (FAB_ITEMS[n.kind]) {
-    const g = pick(item(n.kind), fabricFont)
+    const g = pick(item(n.kind), tier, PLAIN_ITEMS[n.kind] ?? '▪')
     return { ...g, label: g.color }
   }
-  return pick(CONTAINER, fabricFont)
+  return pick(CONTAINER, tier, '■')
 }

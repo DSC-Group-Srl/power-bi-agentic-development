@@ -82,10 +82,10 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
   })
   surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) }))
   const frames = props.spinner?.length ? props.spinner : FRAMES
-  const draw = (s: Seg) => {
+  const draw = (s: Seg, k: number) => {
     if (s.spin) {
       return (
-        <Text color={s.c} bold={s.b}>
+        <Text key={k} color={s.c} bold={s.b}>
           {s.t + (frames[state.phase % frames.length] ?? '')}
         </Text>
       )
@@ -93,23 +93,23 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     const palette = s.sh ? (s.dim ? props.tones[s.sh]?.dim : props.tones[s.sh]?.bright) : undefined
     if (!palette) {
       return (
-        <Text color={s.c} backgroundColor={s.bg} bold={s.b} strikethrough={s.s} italic={s.i}>
+        <Text key={k} color={s.c} backgroundColor={s.bg} bold={s.b} strikethrough={s.s} italic={s.i}>
           {s.t}
         </Text>
       )
     }
     if (s.one) {
       return (
-        <Text color={shimmer(-1, state.phase, s.t.length, palette)}>
+        <Text key={k} color={shimmer(-1, state.phase, s.t.length, palette)}>
           {s.t}
         </Text>
       )
     }
     const chars = [...s.t]
     return (
-      <Text bold={s.b}>
+      <Text key={k} bold={s.b}>
         {chars.map((ch, i) => (
-          <Text color={shimmer(i, state.phase, chars.length, palette)}>{ch}</Text>
+          <Text key={i} color={shimmer(i, state.phase, chars.length, palette)}>{ch}</Text>
         ))}
       </Text>
     )
@@ -118,6 +118,7 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     <Box flexDirection="column">
       {props.rows.map((r, i) => (
         <Box
+          key={r.id || `row-${i}`}
           flexDirection="row"
           height={1}
           overflow="hidden"

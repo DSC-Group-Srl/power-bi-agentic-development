@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { decoded, tokenize } from '../hooks/parse'
 
 type Ran = string[][]
 const opens: unknown[] = []
@@ -22,6 +23,7 @@ let toolResult: any = null
 let copyResult: any = { isCopied: true }
 const failing = new Set<string>()
 let domainsOn = false
+let paged = false
 const DOM = '11111111-2222-4333-8444-555555555555'
 const toasts: string[] = []
 
@@ -63,8 +65,12 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (argv[0] === 'uname') return ok(env.OS ? '' : env.HOME?.startsWith('/Users') ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
-    if (argv[0] === 'fab' && argv[1] === 'api' && argv[2] === 'workspaces') {
-      return ok(domainsOn ? JSON.stringify({ status_code: 200, text: { value: WORKSPACES.map((w, i) => ({ id: w.id, displayName: w.name, ...(i < 3 ? { domainId: DOM } : {}) })) } }) : '')
+    if (argv[0] === 'fab' && argv[1] === 'api' && argv[2]?.startsWith('workspaces')) {
+      if (!domainsOn) return ok('')
+      const all = WORKSPACES.map((w, i) => ({ id: w.id, displayName: w.name, ...(i < 3 || (paged && i === WORKSPACES.length - 1) ? { domainId: DOM } : {}) }))
+      if (!paged) return ok(JSON.stringify({ status_code: 200, text: { value: all } }))
+      const second = argv[2].includes('continuationToken=next')
+      return ok(JSON.stringify({ status_code: 200, text: { value: second ? all.slice(30) : all.slice(0, 30), ...(second ? {} : { continuationToken: 'next' }) } }))
     }
     if (argv[0] === 'fab' && argv[1] === 'ls' && argv[2] === '.domains') return ok(domainsOn ? JSON.stringify({ result: { data: [{ name: 'Sales.Domain', id: DOM }] } }) : '')
     if (argv[0] === 'fab' && argv[1] === 'ls') {
@@ -640,7 +646,9 @@ test('plain glyphs: domains, lakehouse folders, navigation and buttons draw with
   await press(`D:${DOM}`)
   await press('W:WS00')
   await press('W:WS00/LH.Lakehouse')
-  expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  const plain = JSON.stringify(await ui.drawn())
+  expect(plain).not.toMatch(NERD)
+  for (const ch of ['◇', '◫', '◆', '▣', '≋', '■']) expect(plain).toContain(ch)
   await clock.advance(600)
   await ui.post({ press: 'W:WS00' }, { in: 'rows' })
   await clock.advance(100)
@@ -649,5 +657,91 @@ test('plain glyphs: domains, lakehouse folders, navigation and buttons draw with
   expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
   delete lake['WS00.Workspace/LH.Lakehouse']
   domainsOn = false
+  await ui.unmount()
+})
+
+test('domain grouping follows every page of workspaces, and skips the workspace listing when no domain names are readable', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  paged = true
+  const ui = await open($, clock, 'terminal')
+  const p = await rowsOf(ui)
+  expect(JSON.stringify(p.rows.find((r: any) => r.id === `D:${DOM}`))).toContain('4 workspaces')
+  expect(ran.some(a => a[1] === 'api' && a[2] === 'workspaces?continuationToken=next')).toBe(true)
+  paged = false
+  domainsOn = false
+  await ui.unmount()
+})
+
+test('without readable domain names the pane never lists workspaces through the API', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  expect(ran.some(a => a[1] === 'api' && a[2]?.startsWith('workspaces'))).toBe(false)
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).toContain('W:WS00')
+  await ui.unmount()
+})
+
+test('a fab binary written with ~ falls back to fab on PATH; an absolute one is kept for the pane listings', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  const listingsAfter = (from: number) => ran.slice(from).filter(a => a[1] === 'ls')
+  let from = ran.length
+  await $.tool.call({ tool: 'Bash', command: 'cd ~/proj && ~/.local/bin/fab ls "WS00.Workspace"' } as any)
+  await clock.settle()
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(listingsAfter(from).length).toBeGreaterThan(0)
+  expect(listingsAfter(from).every(a => a[0] === 'fab')).toBe(true)
+  expect(ran.slice(from).some(a => a[0]?.includes('~'))).toBe(false)
+  from = ran.length
+  await $.tool.call({ tool: 'Bash', command: '/opt/fab/bin/fab ls "WS00.Workspace"' } as any)
+  await clock.settle()
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(listingsAfter(from).some(a => a[0] === '/opt/fab/bin/fab')).toBe(true)
+  await ui.unmount()
+})
+
+test('/fabric-pane <workspace> opens the domain the workspace sits in and puts the cursor on it', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  const ui = await open($, clock, 'terminal')
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).not.toContain('W:WS01')
+  await $.command.run({ command: PANE, args: 'WS01', origin: { kind: 'person' } } as any)
+  await clock.settle()
+  expect((await rowsOf(ui)).rows.map((r: any) => r.id)).toContain('W:WS01')
+  domainsOn = false
+  await ui.unmount()
+})
+
+test('redirections and URL text parse safely: &> stays one operator and a bare % is kept as is', { timeoutMs: 5_000 }, async () => {
+  const tokens = tokenize('fab ls "WS00.Workspace" &> /dev/null')
+  expect(tokens).toContain('&>')
+  expect(tokens).not.toContain('&')
+  expect(decoded('100% Sales')).toBe('100% Sales')
+  expect(decoded('Sales%20Team')).toBe('Sales Team')
+})
+
+test('without the icon fonts Claude gets a one-line font hint once per session', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  const first = JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))
+  expect(first).toContain('github.com/data-goblin/fabric-nf')
+  expect(first).toContain('fontHint=off')
+  const second = JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))
+  expect(second).not.toContain('fabric-nf')
+  await ui.unmount()
+})
+
+test('fontHint off keeps the font hint out of prompts', { timeoutMs: 20_000, options: { fontHint: 'off' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  const ui = await open($, clock, 'terminal')
+  expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('fabric-nf')
   await ui.unmount()
 })

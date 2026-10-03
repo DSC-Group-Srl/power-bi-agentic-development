@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { tokenize } from '../hooks/parse'
 
 type Ran = string[][]
 const opens: unknown[] = []
@@ -428,5 +429,32 @@ test('plain glyphs: sections, catalog objects, navigation and buttons draw witho
   await ui.post({ press: 'UC:main' }, { in: 'rows' })
   await clock.settle()
   expect(JSON.stringify(await ui.drawn())).not.toMatch(NERD)
+  await ui.unmount()
+})
+
+test('&> stays one redirection operator', { timeoutMs: 5_000 }, async () => {
+  const tokens = tokenize('databricks catalogs list &> /dev/null')
+  expect(tokens).toContain('&>')
+  expect(tokens).not.toContain('&')
+})
+
+test('without the icon fonts Claude gets a one-line font hint once per session, unless fontHint is off', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  const first = JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))
+  expect(first).toContain('github.com/data-goblin/databricks-nf')
+  expect(first).toContain('fontHint=off')
+  expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('databricks-nf')
+  await ui.unmount()
+})
+
+test('fontHint off keeps the font hint out of prompts', { timeoutMs: 20_000, options: { fontHint: 'off' } } as any, async ($: any, on: any) => {
+  const ran: Ran = []
+  const copied: string[] = []
+  const clock = world(on, { HOME: '/home/k' }, ran, copied)
+  const ui = await open($, clock, 'terminal')
+  expect(JSON.stringify(await $.prompt.submit({ text: 'hi', context: [] } as any))).not.toContain('databricks-nf')
   await ui.unmount()
 })

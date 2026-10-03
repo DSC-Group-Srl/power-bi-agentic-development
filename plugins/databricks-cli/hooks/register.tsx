@@ -42,6 +42,10 @@ let lastPress = { key: '', at: 0 }
 const views = new Map<string, { from: number; max: number }>()
 let detected: Tier = 'nerd'
 let glyphSetting = 'auto'
+let fontHint = true
+let remote = false
+let hinted = false
+let detecting = true
 let follow = true
 let blink: Timer | null = null
 let generation = 0
@@ -151,12 +155,25 @@ async function fontState($: EngineInterface, charset: string, name: string): Pro
   }
 }
 
+function quiet(p: Promise<unknown>): void {
+  void p.catch(() => undefined)
+}
+
 async function detectGlyphs($: EngineInterface): Promise<void> {
   if ((await $.env.get('SSH_CONNECTION')) || (await $.env.get('SSH_TTY'))) {
+    remote = true
     detected = 'nerd'
     return
   }
-  detected = (await fontState($, 'f3000', 'DatabricksSymbols')) === 'ok' ? 'databricks' : (await fontState($, 'f04eb', 'Nerd')) === 'ok' ? 'nerd' : 'plain'
+  const nerd = (await fontState($, 'f04eb', 'Nerd')) === 'ok'
+  detected = nerd && (await fontState($, 'f3000', 'DatabricksSymbols')) === 'ok' ? 'databricks' : nerd ? 'nerd' : 'plain'
+}
+
+async function fontNote($: EngineInterface): Promise<string> {
+  if (!fontHint || hinted || detecting || remote || glyphSetting !== 'auto' || detected === 'databricks') return ''
+  if (!(await $.session.surfaces().catch(() => ['terminal'])).includes('terminal')) return ''
+  hinted = true
+  return 'Tell user once: Databricks pane icons need github.com/data-goblin/databricks-nf plus a Nerd Font. Plugin option fontHint=off disables this.'
 }
 
 function tierFor(surface: string): Tier {
@@ -264,7 +281,7 @@ async function flash($: EngineInterface, ids: string[], alsoLit: string[] = [], 
   blink = $.clock.after(FLASH_MS, () => {
     if (generation !== mine) return
     blink = null
-    void patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {}))
+    quiet(patchView($, cur => (generation === mine ? { flash: [], flashDim: [], flashOn: false, flashTones: {} } : {})))
   })
   if (ex.target && !closed) await openPane($, { id: PANE, title: titleFor(ex.target) })
 }
@@ -620,15 +637,18 @@ function changesMembers(args: string[]): boolean {
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
+  fontHint = options?.fontHint !== 'off'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
-    void detectGlyphs($).then(() => $.ui.invalidate('ui.render'))
+    hinted = false
+    detecting = true
+    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')).finally(() => (detecting = false)))
     await patchView($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {}, busy: {} }))
     await $.command.register({ name: PANE, description: 'Open the Databricks pane; args: [profile]' })
     const ex = await get($)
     activeProfile = ex.target?.profile ?? ''
-    if (ex.target) void openPane($, { id: PANE, title: titleFor(ex.target) })
+    if (ex.target) quiet(openPane($, { id: PANE, title: titleFor(ex.target) }))
     return next(e)
   })
 
@@ -746,8 +766,10 @@ export const register: Register = (on, options) => {
     }
     const ex = await get($)
     const n = ex.nodes.find(x => x.id === ex.selected)
-    if (!n || !ex.target || closed || noDock) return next(e)
-    return next({ ...e, context: [...(e.context ?? []), contextFor(ex, n)] })
+    if (!ex.target || closed || noDock) return next(e)
+    const hint = await fontNote($)
+    const context = [...(e.context ?? []), ...(n ? [contextFor(ex, n)] : []), ...(hint ? [hint] : [])]
+    return context.length === (e.context ?? []).length ? next(e) : next({ ...e, context })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
@@ -844,11 +866,11 @@ export const register: Register = (on, options) => {
             <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
           </Box>
           <Box flexDirection="row" gap={2}>
-            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => void goUp($)} />}
-            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => void goHome($)} />}
-            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => void refresh($)} />
-            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => void patchView($, () => ({ expanded: [] }))} />
-            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => void patchView($, () => ({ selected: '', detail: [] }))} />}
+            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
+            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
+            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
+            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
+            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
             <Text> </Text>
           </Box>
         </Box>
@@ -861,24 +883,24 @@ export const register: Register = (on, options) => {
               submitLabel="jump"
               autoFocus
               value={ex.query}
-              onInput={(v: string) => void patchView($, () => ({ query: v }))}
-              onSubmit={(v: string) => void patch($, cur => jumpTo(cur, v))}
+              onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
+              onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
             />
           </Box>
-          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => void patchView($, () => ({ query: '' }))} /> : null}
+          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#353a45', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text dimColor={i > 0} bold={i === 0} wrap="truncate-end">
+              <Text key={i} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
                 {l.replace(/\s+/g, ' ')}
               </Text>
             ))}
             {sel && (
               <Box flexDirection="row" gap={2}>
-                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Databricks`} onPress={() => void openWeb($, ex, sel)} />}
+                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Databricks`} onPress={() => quiet(openWeb($, ex, sel))} />}
               </Box>
             )}
           </Box>
