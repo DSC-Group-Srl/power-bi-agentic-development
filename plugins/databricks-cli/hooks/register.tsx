@@ -888,7 +888,7 @@ export const register: Register = (on, options) => {
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
         {ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#353a45', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+        <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         {ex.detail.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
