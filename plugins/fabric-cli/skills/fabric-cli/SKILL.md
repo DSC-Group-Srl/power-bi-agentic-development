@@ -40,7 +40,7 @@ Bursting hides cost: operations finish fast and their CUs are smoothed into the 
 
 - Check the capacity first: `fab ls .capacities -l` for SKU and state; the Monitoring hub capacity page for utilization, throttling and carry forward. Any carry forward means no headroom
 - Estimate the operation in CU-hours and EUR, and as a share of the SKU's daily budget (an F<n> has 24 * n CU-hours a day; an F2 has 48)
-- Know the flat charges: a Plan (preview) Planner session is 847 CU-hours per user per 30 days, 59 percent of an F2 month, and cannot be ended or refunded
+- Know the flat charges: Plan (preview) bills 30-day sessions per user (Planner 847, Stakeholder 168, Viewer 37 CU-hours); creating and editing a plan by REST was billed as a Stakeholder session (168 CU-h), and a session cannot be ended or refunded
 - Pausing (`fab stop`) bills the whole carry forward at once and clears throttling; scaling up burns it down faster at a similar total cost
 - Full thresholds, formulas, known charges and where to see what an operation cost: [capacity-cost.md](./references/capacity-cost.md)
 

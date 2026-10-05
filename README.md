@@ -75,6 +75,8 @@ claude plugin install paginated-reports@power-bi-agentic-development
 claude plugin install custom-visuals@power-bi-agentic-development
 claude plugin install fabric-cli@power-bi-agentic-development
 claude plugin install fabric-admin@power-bi-agentic-development
+claude plugin install databricks-cli@power-bi-agentic-development
+claude plugin install fabric-data-app@power-bi-agentic-development
 claude plugin install etl@power-bi-agentic-development
 ```
 
@@ -164,6 +166,7 @@ The repo contains skills, agents, and hooks.
 - **Skills** teach agents domain knowledge and workflows. They activate automatically based on task context, or can be invoked manually with `/skill-name`. In Claude Code, skills and commands have coalesced; commands are simply more prescriptive skill workflows.
 - **Agents** are autonomous subprocesses that handle complex, multi-step tasks independently; typically used for review and validation.
 - **Hooks** run automatically after tool use to validate files and catch errors early. They are deterministic; they fire when a specific pattern is matched, not by LLM judgment.
+- **Mods** add a pane to Claude Code itself; see [Claude Code mods](#claude-code-mods).
 
 Hook checks can be individually toggled via config files. Set any check to `false` to disable it:
 - `plugins/pbip/hooks/config.yaml` -- PBIR, TMDL, and report binding validation
@@ -239,6 +242,7 @@ Hook checks can be individually toggled via config files. Set any check to `fals
 | Skill | [`modifying-theme-json`](plugins/reports/skills/modifying-theme-json/) | Design, enforce, audit, and validate report themes through the `pbir` CLI |
 | Skill | [`review-report`](plugins/reports/skills/review-report/) | Actionable feedback on report quality, usage, and effectiveness; usage analysis, health checks |
 | Skill | [`pbir-cli`](plugins/reports/skills/pbir-cli/) | Programmatic report manipulation via the [`pbir` CLI](https://github.com/maxanatsko/pbir.tools), including live Power BI Desktop refresh and page screenshots |
+| Mod | [`/report-pane`](plugins/reports/hooks/) | Report pane: pages, visuals, bookmarks, filters and report measures of the `.Report` folder as a tree that follows `pbir`, with live highlights of what Claude reads or changes. Optional arg: a path to a `.Report` folder. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
 | Agent | [`deneb-reviewer`](plugins/reports/agents/deneb-reviewer.agent.md) | Review Deneb visual specs for Vega/Vega-Lite syntax and conventions |
 | Agent | [`svg-reviewer`](plugins/reports/agents/svg-reviewer.agent.md) | Review SVG DAX measures for syntax and design quality |
 | Agent | [`r-reviewer`](plugins/reports/agents/r-reviewer.agent.md) | Review R visual scripts (ggplot2) for Power BI conventions |
@@ -293,6 +297,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 |------|------|-------------|
 | Skill | [`fabric-cli`](plugins/fabric-cli/skills/fabric-cli/) | Fabric CLI (fab) for any remote operation in Power BI or Fabric (works fully on Pro, PPU; Fabric not required) |
 | Command | [`/migrating-fabric-trial-capacities`](plugins/fabric-cli/commands/migrating-fabric-trial-capacities.md) | Migrate workspaces from trial to production capacity |
+| Mod | [`/fabric-pane`](plugins/fabric-cli/hooks/) | Fabric pane: workspaces and items as a tree that follows `fab`, with live highlights, copy of fab paths, open in Fabric, and open semantic models in `te`. Optional arg: a workspace to reveal. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
 
 </details>
 
@@ -306,6 +311,24 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 </details>
 
 <details>
+<summary><strong>databricks-cli</strong> &ensp; Databricks pane that follows the databricks CLI</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Mod | [`/databricks-pane`](plugins/databricks-cli/hooks/) | Databricks pane: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards as a tree that follows `databricks`, with live highlights, profile switching (`-p` or `DATABRICKS_CONFIG_PROFILE`), copy of CLI arguments, and open in Databricks. Optional arg: a profile. Icons: [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) |
+
+</details>
+
+<details>
+<summary><strong>fabric-data-app</strong> &ensp; Fabric data app pane that follows the rayfin CLI</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Mod | [`/data-app-pane`](plugins/fabric-data-app/hooks/) | Data app pane: every Fabric App (`rayfin/rayfin.yml`) under the working directory with its data sources, deploy state and files, as a tree that follows `rayfin`, with live highlights of what Claude deploys or changes. Optional arg: a folder. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
+
+</details>
+
+<details>
 <summary><strong>etl</strong> &ensp; Inspect, query, and transform lakehouse data with Spark, Livy, and DuckDB</summary>
 
 | Type | Name | Description |
@@ -315,6 +338,44 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 
 </details>
 
+
+## Claude Code mods
+
+> [!WARNING]
+> Mods only work in Claude Code 2.1.287 or newer. In other tools, such as Copilot CLI, the panes do not appear.
+
+Mods add a pane to Claude Code's sidebar. These panes show your Fabric tenant, Databricks workspace, Power BI report or Fabric data apps as a tree beside the conversation, highlight what Claude reads, downloads, uploads, deploys or changes through the CLI, say when Claude is working, show spinners while a command runs, and pass the item you select to Claude as context. See the [Claude Code mod docs](https://code.claude.com/docs/en/plugins/mods/overview).
+
+### Fabric pane
+
+`/fabric-pane` from the `fabric-cli` plugin follows `fab`: workspaces grouped by domain, items, lakehouse tables and files.
+
+<img src="media/mods/fabric-pane.gif" alt="The Fabric pane highlighting a semantic model Claude reads" width="720">
+
+### Databricks pane
+
+`/databricks-pane` from the `databricks-cli` plugin follows `databricks`: workspace, Unity Catalog, compute, jobs, pipelines, apps and dashboards.
+
+<img src="media/mods/databricks-pane.gif" alt="The Databricks pane highlighting a table Claude reads" width="720">
+
+### Report pane
+
+`/report-pane` from the `reports` plugin follows `pbir`: pages, visuals, bookmarks, filters and report measures of a `.Report` folder.
+
+<img src="media/mods/report-pane.gif" alt="The report pane highlighting a visual Claude reads" width="720">
+
+### Data app pane
+
+`/data-app-pane` from the `fabric-data-app` plugin follows `rayfin`: every Fabric App under the working directory, its data sources, deploy state and files.
+
+<img src="media/mods/data-app-pane.gif" alt="The data app pane highlighting an app Claude deploys" width="720">
+
+### Setup
+
+- **Layout:** the sidebar needs the fullscreen layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide. In the default layout or tmux the panes stay hidden and their command tells you how to switch. In a fullscreen session the Fabric, Databricks and report panes open by themselves on Claude's first `fab`, `databricks` or `pbir` command, and the data app pane when the working directory holds a Fabric App
+- **Icons:** install [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) (Fabric, report and data app panes) or [DatabricksSymbols NF](https://github.com/data-goblin/databricks-nf) together with a Nerd Font, then restart the terminal. Without them the panes use a Nerd Font alone, then plain Unicode. Auto detection covers Linux and macOS; on Windows set the `glyphs` option
+- **Getting started:** when the CLI is missing, you are not signed in or the service can't be reached, the Fabric and Databricks panes show the steps to fix it, with commands you can copy
+- **Options:** `glyphs` forces an icon set; `follow` (Follow Claude) decides whether the tree scrolls to what Claude touches; `fontHint` turns off the one-line install hint Claude gets once per session when the icons fall back to plain Unicode
 
 ## Useful stuff
 

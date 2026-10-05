@@ -1,6 +1,6 @@
 ---
 name: modifying-theme-json
-description: Design, enforce, audit, and validate Power BI report themes through the pbir CLI. Invoke when a report uses a default or minimal theme, visuals have inconsistent formatting or many local overrides, or the user asks to create, copy, apply, standardize, rebrand, audit, or validate a theme; change theme colors or typography; promote visual formatting into the theme; clear overrides; or improve theme compliance.
+description: Design, enforce, audit, and validate Power BI report themes through the pbir CLI. Invoke when a report uses a default or minimal theme, visuals have inconsistent formatting or many local overrides, or the user asks to create, copy, apply, standardize, rebrand, audit, or validate a theme; change theme colors or typography; define style presets; promote visual formatting into the theme; clear overrides; or improve theme compliance.
 ---
 
 # Power BI report themes
@@ -31,6 +31,7 @@ Visual-level overrides should remain only for content-specific exceptions or con
 Power BI defaults
   -> theme wildcard defaults
   -> theme visual-type defaults
+  -> selected style preset
   -> visual instance overrides
 ```
 
@@ -133,6 +134,7 @@ Desktop refresh does not reload theme resources. Close and reopen the report bef
 
 ## Detailed references
 
+- `references/style-presets.md`: named style presets per visual type, default preset, selecting a preset on visuals
 - `pbir-cli` -> `references/modifying-theme.md`: colors, fonts, formatting, normalization, validation
 - `pbir-cli` -> `references/apply-theme.md`: templates, copying, clearing overrides
 - `pbir-cli` -> `references/format-visuals.md`: cascade inspection and property discovery
