@@ -68,6 +68,8 @@ Requirements
     - Azure CLI logged in (`az login`); tokens are read from the az cache, never persisted
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import subprocess
