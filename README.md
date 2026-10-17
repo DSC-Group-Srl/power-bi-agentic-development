@@ -78,6 +78,7 @@ claude plugin install fabric-admin@power-bi-agentic-development
 claude plugin install databricks-cli@power-bi-agentic-development
 claude plugin install fabric-data-app@power-bi-agentic-development
 claude plugin install etl@power-bi-agentic-development
+claude plugin install dashboards@power-bi-agentic-development
 ```
 
 ### Copilot CLI
@@ -325,6 +326,15 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 | Type | Name | Description |
 |------|------|-------------|
 | Mod | [`/fabric-app-pane`](plugins/fabric-data-app/hooks/) | Fabric app pane: every Fabric App (`rayfin/rayfin.yml`) under the working directory with its data sources, deploy state and files, as a tree that follows `rayfin`, with live highlights of what Claude deploys or changes. Optional arg: a folder. Icons: [FabricSymbols NF](https://github.com/data-goblin/fabric-nf) |
+
+</details>
+
+<details>
+<summary><strong>dashboards</strong> &ensp; Query Fabric and Power BI semantic models for Claude Dashboards</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Skill | [`querying-fabric`](plugins/dashboards/skills/querying-fabric/) | DAX (and T-SQL) queries through a Fabric connector or MCP server for Claude Dashboards: reuse the model's measures instead of writing new ones, give every KPI a target and a trend, crossfilter every visual through query parameters, plus DAX query syntax, time intelligence and an execute-inspect-fix test loop. Derived from the `dax-authoring` skill that Microsoft ships with Fabric Apps |
 
 </details>
 

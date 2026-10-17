@@ -1,0 +1,20 @@
+{
+  "name": "dashboards",
+  "version": "26.40.6",
+  "description": "Query Fabric and Power BI semantic models for Claude Dashboards: reuse model measures, give every KPI a target and a trend, and crossfilter every visual.",
+  "author": {
+    "name": "Kurt Buhler",
+    "url": "https://data-goblins.com"
+  },
+  "homepage": "https://data-goblins.com",
+  "repository": "https://github.com/data-goblin/power-bi-agentic-development",
+  "license": "GPL-3.0",
+  "keywords": [
+    "claude-dashboards",
+    "microsoft-fabric",
+    "power-bi",
+    "semantic-model",
+    "dax",
+    "mcp"
+  ]
+}
