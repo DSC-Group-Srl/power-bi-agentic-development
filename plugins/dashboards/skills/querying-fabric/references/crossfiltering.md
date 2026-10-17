@@ -65,6 +65,28 @@ For a numeric column, compare with a sentinel the column never holds, or pass a 
 VAR _Year = FILTER ( ALL ( 'Date'[Year] ), @year = 0 || 'Date'[Year] = @year )
 ```
 
+## In a Claude Dashboard
+
+A Claude Dashboard stores each dataset as a connector call, and fills `{{name}}` placeholders in the call's
+arguments from the page's filter state. Pass the whole DAX parameter object through them, so the query keeps
+using `@name` parameters and never has values spliced into its text:
+
+```json
+{
+  "model": "<model id>",
+  "query": "DEFINE VAR _Segment = FILTER ( ALL ( 'Customer'[Segment] ), @segment = \"\" || 'Customer'[Segment] = @segment ) EVALUATE ...",
+  "parameters": { "segment": "{{segment}}", "categories": "{{categories}}", "year": "{{year}}" }
+}
+```
+
+- Give every parameter a default in the dashboard's params (`""` for no selection, `0` for a numeric sentinel).
+  A parameter with no default is NULL until the page sets one, and every query has to run at its defaults
+- A click calls `dash.setParams({segment: value})`; every dataset whose arguments name `{{segment}}` runs again.
+  Clearing sets it back to its default (`""`), not `null`
+- The visual that owns a selection leaves its own `{{name}}` out of its `parameters`, so it keeps every member
+- Model selections such as a reporting currency are parameters too (`{{currency}}`, default from the model or
+  the user), so a reader can switch them
+
 ## Multi-select
 
 Pass the selected members as one delimited string and test membership with `PATHCONTAINS`, which splits on `|`:
