@@ -204,7 +204,7 @@ For titles that react to slicer selections or change color with status, use a `_
 pbir dax measures add \
   "Sales.Report" \
   -n "Title_Sales" \
-  -e 'IF(ISFILTERED(Region[Region]), "Sales: " & SELECTEDVALUE(Region[Region], "multiple regions"), "Sales: all regions")' \
+  -e "IF(ISFILTERED('Region'[Region]), \"Sales: \" & SELECTEDVALUE('Region'[Region], \"multiple regions\"), \"Sales: all regions\")" \
   -t _Report
 
 # Bind via title CF, or drive a textbox text run with the measure

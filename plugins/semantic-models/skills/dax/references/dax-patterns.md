@@ -570,7 +570,7 @@ VAR _Result = SUMX ( _Joined, [@Agg2] )
 
 Every filter adds a `WHERE` clause in xmSQL and may force an extra SE join. Users often apply slicer or visual-level filters that don't affect the calculation being optimized.
 
-**Detection:** `WHERE` clauses on columns not used in the measure logic, or filter variables that restrict to a single value (e.g., `Currency[Code] = "USD"` in a USD-only model).
+**Detection:** `WHERE` clauses on columns not used in the measure logic, or filter variables that restrict to a single value (e.g., `'Currency'[Code] = "USD"` in a USD-only model).
 
 **Fix:** Remove filters one at a time and re-run; if the result doesn't change, the filter is unneeded. Filters needed across all visuals → push to the data source (model-level — see [Section 5](./model-optimization.md#section-5-tier-3-model-optimization-patterns)).
 
@@ -605,7 +605,7 @@ MEASURE 'Sales'[Total Revenue Filtered] =
 
 ### QRY003: Reduce Query Grain
 
-Grouping by a high-cardinality column (e.g., `Calendar[Date]` → 365 rows) when the user only needs monthly data (12 rows) inflates SE row count ~30×.
+Grouping by a high-cardinality column (e.g., `'Calendar'[Date]` → 365 rows) when the user only needs monthly data (12 rows) inflates SE row count ~30×.
 
 **Detection:** Groupby on a date or high-cardinality column producing far more rows than the visual needs.
 
@@ -617,9 +617,9 @@ SUMMARIZECOLUMNS ( 'Calendar'[YearMonth], "Revenue", [Total Revenue] )
 
 **Option B — period-end axis + measure pin** (show period-end snapshot instead of full-period aggregate):
 
-Requires a period-end column in the date table (e.g., `Calendar[MonthEndDate]`). User changes the visual axis to it, then pins the measure to that date:
+Requires a period-end column in the date table (e.g., `'Calendar'[MonthEndDate]`). User changes the visual axis to it, then pins the measure to that date:
 ```dax
--- User changes axis from Calendar[Date] to Calendar[MonthEndDate]
+-- User changes axis from 'Calendar'[Date] to 'Calendar'[MonthEndDate]
 -- Measure pins CALCULATE to the period-end date to return that day's value only
 MEASURE 'Sales'[Active Customers] =
     CALCULATE (

@@ -91,6 +91,8 @@ Follow all rules below.
 
 6. **Verify rendering through the Desktop bridge.** When the report is open in Power BI Desktop, run `pbir desktop refresh` after every change unless the user asks not to, then `pbir desktop screenshot` and inspect the PNG after every meaningful change. Validation cannot catch rendering problems (overlap, truncation, wrong field, illegible formatting); the screenshot is the only proof a change rendered as intended. When a request involves many changes, ask the user up front whether to refresh after each step (so they watch progress in the canvas) or once at the end. Check availability once with `pbir desktop list` before starting the loop; if the bridge is unavailable, do not retry it after every change (see "When the bridge is unavailable" below)
 
+7. **Reference objects the same way in every DAX expression.** In `pbir model -q` queries, report-level measures and visual calculations, write columns as `'Table'[Column]` (table name always present and quoted) and measures as `[Measure]` with no table in front. The `Table.Field` form in `-d "Role:Table.Field"` and `--field` is `pbir` binding syntax, not DAX; use it only in those flags
+
 
 ## Core Workflows
 

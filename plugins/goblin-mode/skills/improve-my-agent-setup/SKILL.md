@@ -68,7 +68,7 @@ The JSON has these sections: `skills`, `memory`, `settings`, `tools`, `mcp`, `gi
 
 Two things the scan cannot see on its own, so check them yourself:
 
-- **MCP servers from plugins.** The scan reads config files only; servers a plugin ships (for example `microsoft-learn`, `figma`, `claude-in-chrome`) will not appear there. Cross-check the MCP tools actually available in your session before concluding someone has "no MCP".
+- **MCP servers from plugins.** The scan reads config files only; servers a plugin ships (for example `pbiviz`, `figma`, `claude-in-chrome`) will not appear there. Cross-check the MCP tools actually available in your session before concluding someone has "no MCP".
 - **Live model and effort.** Read the model powering the current session and any effort setting from your own context, not just the `model` field in settings.
 
 ## Step 3: Interpret, theme by theme

@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "A marketplace for skills and tools for agentic Power BI development.",
-    "version": "26.40.4"
+    "version": "26.40.7"
   },
   "plugins": [
     {
@@ -72,6 +72,11 @@
       "name": "etl",
       "description": "Inspect, query, and transform lakehouse data with Spark, Livy, and DuckDB.",
       "source": "./plugins/etl"
+    },
+    {
+      "name": "dashboards",
+      "description": "Query Fabric semantic models for Claude Dashboards: reuse measures, KPI targets and trends, crossfiltering.",
+      "source": "./plugins/dashboards"
     }
   ]
 }

@@ -5,13 +5,13 @@ description: Automatically invoke this skill whenever the user asks about Fabric
 
 # Audit Tenant Settings
 
-Audit Fabric / Power BI tenant settings against a curated baseline, surface drift, enumerate delegated overrides at capacity / domain / workspace scope, investigate the Entra security groups those settings reference, and turn findings into a grounded discussion about what to do next. Always invoke the `fabric-cli` skill alongside this skill; it provides the `fab` CLI guidance, admin API references, and the `microsoft-learn` MCP server that this skill depends on.
+Audit Fabric / Power BI tenant settings against a curated baseline, surface drift, enumerate delegated overrides at capacity / domain / workspace scope, investigate the Entra security groups those settings reference, and turn findings into a grounded discussion about what to do next. Always invoke the `fabric-cli` skill alongside this skill; it provides the `fab` CLI guidance and admin API references that this skill depends on.
 
 ## Prerequisites
 
 This plugin is an add-on to the `fabric-cli` plugin. It requires:
 
-- **fabric-cli plugin** installed and enabled; provides `fab` CLI guidance, the `microsoft-learn` MCP server, and admin API reference docs.
+- **fabric-cli plugin** installed and enabled; provides `fab` CLI guidance and admin API reference docs.
 - **fab CLI** (`ms-fabric-cli`) authenticated with a Fabric / Power BI admin account.
 - **az CLI** authenticated with Graph permissions (`Group.Read.All`, `User.Read.All`, `Directory.Read.All`, `RoleManagement.Read.Directory`) when investigating security groups.
 
@@ -79,7 +79,7 @@ Invoke for any tenant-, delegation-, or SG-scoped governance question that needs
    - Tenant-wide state: `fab api "admin/tenantsettings"`
    - Delegated overrides: `fab api "admin/capacities/delegatedTenantSettingOverrides"`, `admin/domains/...`, `admin/workspaces/...`
    - Entra groups and role assignments: `az ad group`, `az rest --method get --uri https://graph.microsoft.com/v1.0/...`
-3. **Microsoft Learn** via the `microsoft-learn` MCP server (`microsoft_docs_search`, `microsoft_docs_fetch`, `microsoft_code_sample_search`) or the `pbi-search` CLI as an alternative. Use when metadata is stale, the setting is brand new, or the user asks a feature question the baseline cannot answer.
+3. **Microsoft Learn** at https://learn.microsoft.com/en-us/fabric/admin/tenant-settings-index, or via the `pbi-search` CLI. Use when metadata is stale, the setting is brand new, or the user asks a feature question the baseline cannot answer.
 
 ## Workflow
 
@@ -154,10 +154,7 @@ For each setting where drift matters, ground the discussion in authoritative sou
    ```bash
    fab api "admin/tenantsettings" -q "text.tenantSettings[?settingName=='<API name>']"
    ```
-3. If the metadata is stale or lacks nuance for the scenario, fetch the canonical doc via the `microsoft-learn` MCP server:
-   - `microsoft_docs_search` using the portal title or API name
-   - `microsoft_docs_fetch` on the metadata's `source_url` or the top search hit
-   - `microsoft_code_sample_search` when the user wants to see code implications
+3. If the metadata is stale or lacks nuance for the scenario, fetch the canonical doc: the metadata's `source_url`, or a `pbi-search` hit for the portal title or API name.
 4. Answer in this shape: portal title + API name, one-sentence description, preview status, current state, recommended posture, risk level, recommendation nuance, docs link.
 
 If metadata and docs disagree, trust the docs and surface the drift to the user so the baseline can be updated.

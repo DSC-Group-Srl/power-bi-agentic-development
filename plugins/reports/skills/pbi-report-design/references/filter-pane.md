@@ -13,7 +13,7 @@ Rule: **lock to inform, hide to clean.** Never hide a business filter the reader
 
 ## Renaming Filter Cards
 
-The card title is editable independently of the field it filters; renaming does not rename the model field. Replace jargon field names like `D_SHOP[Reporting Row Name]` with a readable label like "Report Line". Renamed cards do not automatically rename matching slicers; rename the slicer header too.
+The card title is editable independently of the field it filters; renaming does not rename the model field. Replace jargon field names like `'D_SHOP'[Reporting Row Name]` with a readable label like "Report Line". Renamed cards do not automatically rename matching slicers; rename the slicer header too.
 
 ## Card Order
 

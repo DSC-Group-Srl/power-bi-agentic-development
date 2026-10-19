@@ -11,19 +11,12 @@ Guidance for using `fab` to programmatically manage Fabric & Power BI service
 - Fabric CLI is for working with the Cloud environment and not local files; it works with Power BI Pro, PPU, or Fabric; you DO NOT need a Fabric SKU to use the Fabric CLI
 - Keep `fab` current: check the installed version against the latest `ms-fabric-cli` release and upgrade with `uv tool upgrade ms-fabric-cli` unless the user has pinned a specific version. Discover commands and flags with `fab --help` and `fab <command> --help` rather than hard-coding behavior; the CLI surface changes regularly
 
-> [!IMPORTANT] 
-> Any time you encounter errors, user preferences or learnings when using the Fabric cli, ALWAYS note these down in the user memory rules, i.e. `.claude/rules/fabric-cli.md` for future improvement. 
-> This is ONLY for generic learnings and not for item- or task-specific learnings.
-
-## When to use this skill
-
-- Use whenever the user mentions "Fabric" or "Power BI"
-- Use when user asks about Power BI workspaces, deployment, tenants, publishing, download, permissions, or data
-
+Record generic `fab` learnings (errors, user preferences) in `.claude/rules/fabric-cli.md` so
+later sessions start with them; item- or task-specific findings do not go there.
 
 ## Critical general rules
 
-- IMPORTANT: The first time you use `fab` run check that it is up to date to the latest version (upgrade with `uv tool upgrade ms-fabric-cli` unless the user has pinned a version) and run `fab auth status`; If user isn't authenticated, ask them to run `fab auth login`
+- On first use, run `fab auth status`; if it is not authenticated, ask the user to run `fab auth login`
 - Always use `fab --help` and `fab <command> --help` the first time you use a command to understand its syntax
 - You must search the skill /references/ for relevant reference files that explain certain commands, examples, scripts, or workflows before you start using `fab`
 - Before first use, ask the user if they have Fabric admin access, sensitivity labels or DLP policies, any API restrictions, or preferences for Fabric/Power BI API usage; remind user to add this to memory files
@@ -99,7 +92,7 @@ You must read and understand the common list of operations with simple examples
 
 ## Essential Concepts
 
-For information about any concepts related to Power BI or Fabric you must search or fetch via the `microsoft-learn` MCP server (or the `pbi-search` CLI as an alternative) and ask the user questions with the `AskUserQuestion` tool; NEVER guess or make assumptions.
+For information about any concepts related to Power BI or Fabric you must search or fetch the Microsoft Learn documentation at https://learn.microsoft.com (or use the `pbi-search` CLI) and ask the user questions with the `AskUserQuestion` tool; NEVER guess or make assumptions.
 
 ### Workspaces
 
@@ -549,9 +542,9 @@ Check references before deploying:
 
 ## Gotchas
 
-- **IMPORTANT:** DON'T try to use `fab ls` on items that aren't data items (.Lakehouse, .Warehouse, etc); use `fab ls` to find workspaces and items, and use `fab get` to look at definitions
-- ALWAYS Use the `-f` flag when using `fab get`, `fab import`, `fab export`, etc. as described above
-- ONLY fallback to `fab api` when a command doesn't exist
+- `fab ls` lists workspaces and items and browses data items (.Lakehouse, .Warehouse); on other items it fails, so read their definitions with `fab get`
+- Pass `-f` to `fab get`, `fab import` and `fab export` to skip the overwrite and sensitivity prompts
+- Use `fab api` only when no command covers the operation
 - **Definition changes feel slow but aren't:** `fab import` / `nb create` / `nb cell edit` take 25-60s to push a notebook definition only because they poll the LRO at the server's `Retry-After: 20`. The work is ~1s. Use [`scripts/deploy_notebook.py`](./scripts/deploy_notebook.py) (tight-polls at ~0.3s) for definition changes; the poll interval is the single biggest lever
 
 ## References

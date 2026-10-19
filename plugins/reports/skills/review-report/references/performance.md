@@ -102,24 +102,24 @@ EVALUATE
 SUMMARIZECOLUMNS(
     'Table1'[GroupingColumn1],              -- From Category/Rows role
     'Table2'[GroupingColumn2],              -- From Series/Columns role
-    "Measure1_Alias", 'Table'[Measure1],   -- From Y/Values role
-    "Measure2_Alias", 'Table'[Measure2]
+    "Measure1_Alias", [Measure1],           -- From Y/Values role
+    "Measure2_Alias", [Measure2]
 )
 ```
 
 **To construct the query for a visual:**
 1. Collect all Column-type projections from grouping roles -- these become the first arguments to SUMMARIZECOLUMNS
-2. Collect all Measure-type projections from measure roles -- these become `"alias", Table[Measure]` pairs
+2. Collect all Measure-type projections from measure roles -- these become `"alias", [Measure]` pairs
 3. Check `reportExtensions.json` for extension measure definitions -- these may need a DEFINE block
 4. Check `objects` for conditional formatting using measures -- these add hidden query columns
 
-**Example:** A bar chart with `Category: Date[Month]`, `Y: Sales[Revenue], Sales[Margin %]` generates:
+**Example:** A bar chart with `Category: 'Date'[Month]`, `Y: [Revenue], [Margin %]` generates:
 ```dax
 EVALUATE
 SUMMARIZECOLUMNS(
     'Date'[Month],
-    "Revenue", 'Sales'[Revenue],
-    "Margin", 'Sales'[Margin %]
+    "Revenue", [Revenue],
+    "Margin", [Margin %]
 )
 ```
 

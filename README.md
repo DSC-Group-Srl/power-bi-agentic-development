@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-26.40.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-26.40.7-blue" alt="Version">
   <img src="https://img.shields.io/badge/Power_BI-F2C811?logo=powerbi&logoColor=000" alt="Power BI">
   <img src="https://img.shields.io/badge/Microsoft_Fabric-008272" alt="Microsoft Fabric">
   <img src="https://img.shields.io/badge/Tabular_Editor-2E7D32" alt="Tabular Editor">
@@ -78,6 +78,7 @@ claude plugin install fabric-admin@power-bi-agentic-development
 claude plugin install databricks-cli@power-bi-agentic-development
 claude plugin install fabric-data-app@power-bi-agentic-development
 claude plugin install etl@power-bi-agentic-development
+claude plugin install dashboards@power-bi-agentic-development
 ```
 
 ### Copilot CLI
@@ -178,7 +179,7 @@ Hook checks can be individually toggled via config files. Set any check to `fals
 > Don't install every plugin. Each skill competes for the agent's attention and context window, so install a plugin only when you need it and remove it when you don't. Prefer installing plugins scoped to a project rather than to your user, so each project carries only the skills it actually uses.
 
 <details>
-<summary><strong>goblin-mode</strong> &ensp; Get started, set up your tools, and audit and improve your whole agentic setup</summary>
+<summary><img src="media/icons/goblin-mode.png" alt="" height="20"> <strong>goblin-mode</strong> &ensp; Get started, set up your tools, and audit and improve your whole agentic setup</summary>
 
 | Type | Name | Description |
 |------|------|-------------|
@@ -251,7 +252,7 @@ Hook checks can be individually toggled via config files. Set any check to `fals
 </details>
 
 <details>
-<summary><strong>paginated-reports</strong> &ensp; Author, validate, publish, and test print-ready paginated reports</summary>
+<summary><img src="media/icons/paginated-reports.svg" alt="" height="20"> <strong>paginated-reports</strong> &ensp; Author, validate, publish, and test print-ready paginated reports</summary>
 
 | Type | Name | Description |
 |------|------|-------------|
@@ -261,7 +262,7 @@ Hook checks can be individually toggled via config files. Set any check to `fals
 </details>
 
 <details>
-<summary><strong>custom-visuals</strong> &ensp; Build Deneb, Python, R, SVG, and pbiviz custom visuals for Power BI</summary>
+<summary><img src="media/icons/custom-visuals.svg" alt="" height="20"> <strong>custom-visuals</strong> &ensp; Build Deneb, Python, R, SVG, and pbiviz custom visuals for Power BI</summary>
 
 | Type | Name | Description |
 |------|------|-------------|
@@ -311,7 +312,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 </details>
 
 <details>
-<summary><strong>databricks-cli</strong> &ensp; Databricks pane that follows the databricks CLI</summary>
+<summary><img src="media/icons/databricks-cli.svg" alt="" height="20"> <strong>databricks-cli</strong> &ensp; Databricks pane that follows the databricks CLI</summary>
 
 | Type | Name | Description |
 |------|------|-------------|
@@ -320,7 +321,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 </details>
 
 <details>
-<summary><strong>fabric-data-app</strong> &ensp; Fabric Fabric app pane that follows the rayfin CLI</summary>
+<summary><img src="media/icons/fabric-data-app.svg" alt="" height="20"> <strong>fabric-data-app</strong> &ensp; Fabric app pane that follows the rayfin CLI</summary>
 
 | Type | Name | Description |
 |------|------|-------------|
@@ -329,7 +330,17 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 </details>
 
 <details>
-<summary><strong>etl</strong> &ensp; Inspect, query, and transform lakehouse data with Spark, Livy, and DuckDB</summary>
+<summary><img src="media/icons/dashboards.svg" alt="" height="20"> <strong>dashboards</strong> &ensp; Query Fabric and Power BI semantic models for Claude Dashboards</summary>
+
+| Type | Name | Description |
+|------|------|-------------|
+| Skill | [`querying-fabric`](plugins/dashboards/skills/querying-fabric/) | DAX (and T-SQL) queries through a Fabric connector or MCP server for Claude Dashboards: reuse the model's measures instead of writing new ones, give every KPI a target and a trend, crossfilter every visual through query parameters, plus DAX query syntax, time intelligence and an execute-inspect-fix test loop. Derived from the `dax-authoring` skill that Microsoft ships with Fabric Apps |
+| Skill | [`creating-good-dashboards`](plugins/dashboards/skills/creating-good-dashboards/) | Dashboard comment etiquette (never resolve comments yourself; reply in a few short bullets) and visual style after Stephen Few and Edward Tufte: one screen, KPIs with target and trend, data-ink, one accent colour, direct labels, crossfiltering |
+
+</details>
+
+<details>
+<summary><img src="media/icons/etl.svg" alt="" height="20"> <strong>etl</strong> &ensp; Inspect, query, and transform lakehouse data with Spark, Livy, and DuckDB</summary>
 
 | Type | Name | Description |
 |------|------|-------------|

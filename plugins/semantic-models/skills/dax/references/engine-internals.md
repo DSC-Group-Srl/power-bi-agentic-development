@@ -36,9 +36,9 @@ xmSQL is the human-readable representation of SE scan activity in trace events â
 **Computed expressions:** Row-level calculations use a `WITH` block with `:=`, referenced in aggregations via `@`:
 ```
 WITH $Expr0 := ( 'Sales'[UnitPrice] * 'Sales'[OrderQuantity] )
-SELECT Product[Category], SUM ( @$Expr0 )
+SELECT 'Product'[Category], SUM ( @$Expr0 )
 FROM Sales
-    LEFT OUTER JOIN Product ON 'Sales'[ProductKey] = Product[ProductKey]
+    LEFT OUTER JOIN Product ON 'Sales'[ProductKey] = 'Product'[ProductKey]
 ```
 
 **Relationship joins are LEFT OUTER unless otherwise stated:** the many-side table is FROM, the one-side is joined in. Other internal forms (`INNER JOIN`, `REDUCED BY`, reverse joins) can also appear depending on the operation.

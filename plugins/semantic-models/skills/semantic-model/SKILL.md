@@ -31,6 +31,12 @@ Reach for the narrowest capable tool, in order. Most edits never leave step 1.
 
 Ordering gate: add relationships before any measure that uses `RELATED()` or a cross-table `CALCULATE()`, or the save gate fails with `DAX0002` (no relationship in context).
 
+## Object references in DAX and metadata
+
+Write column references as `'Table'[Column]`: the table name is always present and always in single quotes. Write measure references as `[Measure]`, never prefixed with a table. This applies everywhere DAX or model metadata names an object: measure, calculated column and calculation item expressions, RLS filters, format string expressions, DAX queries (`te query`, `pbir model -q`), and descriptions or annotations that mention an object.
+
+Why: a measure belongs to the model rather than to its home table, so moving it between tables must not change any expression that uses it; a bare `[Measure]` also tells the reader at a glance that it is a measure and not a column. An unqualified column is ambiguous as soon as two tables share a column name, and quoting every table name keeps one consistent form whether or not the name needs quotes.
+
 ## Lifecycle
 
 ### Design

@@ -77,7 +77,7 @@ Auto-refresh never raises; if no Desktop instance has the report open, saves pro
 For thick reports (model referenced `byPath`) open in Desktop, `pbir model -q` executes DAX against Desktop's local Analysis Services engine, and field validation resolves the schema live:
 
 ```bash
-pbir model "Thick.Report" -q "EVALUATE TOPN(5, VALUES(Brands[Brand]))"
+pbir model "Thick.Report" -q "EVALUATE TOPN(5, VALUES('Brands'[Brand]))"
 pbir model "Thick.Report" -d                          # Live schema: tables, columns, measures
 ```
 

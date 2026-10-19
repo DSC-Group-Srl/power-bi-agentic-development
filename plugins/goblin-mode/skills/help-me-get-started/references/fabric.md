@@ -60,17 +60,7 @@ az provider register --namespace Microsoft.Fabric   # first time only
 
 ## MCP servers
 
-Two HTTP MCP servers ship configured in the `fabric-cli` plugin (`plugins/fabric-cli/.mcp.json`); they start with the plugin. A third serves custom-visuals.
-
-### microsoft-learn (public, no auth)
-
-Grounds answers in current Microsoft docs (`microsoft_docs_search`, `microsoft_docs_fetch`). Config, already bundled:
-
-```json
-{ "type": "http", "url": "https://learn.microsoft.com/api/mcp" }
-```
-
-Nothing to install or authenticate.
+The `fabric-cli` plugin ships no MCP servers; `fabric-sql` is optional and registered by hand. The `custom-visuals` plugin bundles `pbiviz`.
 
 ### fabric-sql (needs a bearer token)
 

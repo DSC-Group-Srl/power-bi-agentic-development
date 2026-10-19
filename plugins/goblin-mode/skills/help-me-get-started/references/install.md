@@ -88,7 +88,7 @@ paginated-reports:
 fabric-cli:
   needs: [fab (Fabric CLI), az (Azure CLI)]
   optional: [DuckDB (lakehouse queries), sqlcmd (SQL endpoint), nb (notebooks), az microsoft-fabric extension]
-  mcp: [microsoft-learn (public), fabric-sql (needs FABRIC_PBI_TOKEN)]
+  mcp: [fabric-sql (optional, register yourself; needs FABRIC_PBI_TOKEN)]
   install: fabric.md
 
 fabric-admin:
