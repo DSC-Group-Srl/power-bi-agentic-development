@@ -10,15 +10,15 @@ When writing or generating M expressions for import partitions, follow this orde
 let
     Source = Sql.Database(SqlEndpoint, Database),
     Data = Source{[Schema="dbo", Item="MyTable"]}[Data],
-    -- 1. Filter rows (folds to WHERE)
+    // 1. Filter rows (folds to WHERE)
     Filtered = Table.SelectRows(Data, each [IsActive] = true),
-    -- 2. Select columns (folds to SELECT)
+    // 2. Select columns (folds to SELECT)
     Selected = Table.SelectColumns(Filtered, {"Id", "Date", "Amount"}),
-    -- 3. Set types (folds to CAST)
+    // 3. Set types (folds to CAST)
     Typed = Table.TransformColumnTypes(Selected, {{"Amount", Currency.Type}}),
-    -- 4. Sort if needed (folds to ORDER BY)
+    // 4. Sort if needed (folds to ORDER BY)
     Sorted = Table.Sort(Typed, {{"Date", Order.Descending}}),
-    -- 5. Non-foldable transforms LAST
+    // 5. Non-foldable transforms LAST
     Added = Table.AddColumn(Sorted, "Category", each if [Amount] > 1000 then "High" else "Low")
 in
     Added
@@ -166,14 +166,14 @@ let
     Source = Sql.Database(SqlEndpoint, Database),
     Data = Source{[Schema="dbo", Item="Orders"]}[Data],
 
-    -- FOLDABLE: These translate to SQL
+    // FOLDABLE: These translate to SQL
     #"Filtered Rows" = Table.SelectRows(Data, each [Year] >= 2023),
     #"Selected Columns" = Table.SelectColumns(#"Filtered Rows",
         {"OrderId", "Date", "Amount", "CustomerId", "Status"}),
     #"Set Types" = Table.TransformColumnTypes(#"Selected Columns", {
         {"Amount", Currency.Type}, {"Date", type date}}),
 
-    -- NON-FOLDABLE: These run in the mashup engine
+    // NON-FOLDABLE: These run in the mashup engine
     #"Added Category" = Table.AddColumn(#"Set Types", "AmountBucket",
         each if [Amount] > 10000 then "Large" else "Small", type text)
 in
@@ -191,12 +191,12 @@ Programmatically: execute the expression via the `executeQuery` API. If a query 
 Remove columns as early as possible. Every column not removed travels through every subsequent step.
 
 ```
--- Good: remove columns immediately after navigation
+// Good: remove columns immediately after navigation
 Data = Source{[Schema="dbo", Item="Orders"]}[Data],
 #"Selected" = Table.SelectColumns(Data, {"OrderId", "Date", "Amount"}),
 ...
 
--- Bad: remove columns at the end after all transforms
+// Bad: remove columns at the end after all transforms
 ...
 #"Final" = Table.RemoveColumns(#"Transformed", {"Col1", "Col2", "Col3", ...})
 ```
@@ -251,11 +251,11 @@ Never use `Table.TransformColumnTypes` with `Replacer.ReplaceValue` or locale-de
 ### Pulling Entire Tables Then Filtering
 
 ```
--- Anti-pattern: filter after all transforms
+// Anti-pattern: filter after all transforms
 Data = Source{[Schema="dbo", Item="BigTable"]}[Data],
-#"Added Column" = Table.AddColumn(Data, ...),  -- breaks folding
+#"Added Column" = Table.AddColumn(Data, ...),  // breaks folding
 #"Filtered" = Table.SelectRows(#"Added Column", each [Year] >= 2023)
--- Filter runs locally on ALL rows
+// Filter runs locally on ALL rows
 ```
 
 ### Using Table.Buffer Unnecessarily
@@ -271,13 +271,13 @@ Cross-query references (accessing a column from a different query) break folding
 Each step adds overhead. Combine related operations where natural; don't create a separate step for each individual column rename when `Table.RenameColumns` handles multiples:
 
 ```
--- Good: one step for all renames
+// Good: one step for all renames
 #"Renamed" = Table.RenameColumns(Data, {
     {"OldName1", "NewName1"},
     {"OldName2", "NewName2"}
 })
 
--- Bad: separate step per rename
+// Bad: separate step per rename
 #"Renamed1" = Table.RenameColumns(Data, {{"OldName1", "NewName1"}}),
 #"Renamed2" = Table.RenameColumns(#"Renamed1", {{"OldName2", "NewName2"}})
 ```

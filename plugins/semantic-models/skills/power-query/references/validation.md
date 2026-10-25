@@ -151,7 +151,7 @@ shared Result = let
     Data = Source{[Schema="dbo",Item="Orders"]}[Data],
     #"Filtered" = Table.SelectRows(Data, each [Status] <> "Cancelled"),
     #"Selected" = Table.SelectColumns(#"Filtered", {"OrderId", "Amount"})
-in Data;  -- Change this to inspect different steps
+in Data;  // Change this to inspect different steps
 ```
 
 | `in` target | What it shows |
