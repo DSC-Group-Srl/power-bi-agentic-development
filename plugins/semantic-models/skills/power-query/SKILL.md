@@ -160,13 +160,13 @@ AS returns an error if the expression is malformed. This is faster than a full e
 See the data at any point in the transformation chain by truncating the `let...in`:
 
 ```
--- See raw source data (all columns)
+// See raw source data (all columns)
 in Data;
 
--- See after column removal
+// See after column removal
 in #"Removed Columns";
 
--- See final result
+// See final result
 in #"Changed Type";
 ```
 
