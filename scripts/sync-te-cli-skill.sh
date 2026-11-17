@@ -44,7 +44,7 @@ write_get_ref() {
 The `te` (Tabular Editor CLI) binary is published per platform on a public CDN,
 no account or auth needed:
 
-    https://cdn.tabulareditor.com/files/cli/latest/te-<os>-<arch>.tar.gz   (.zip on Windows)
+    https://cdn.tabulareditor.com/files/latest/cli/te-<os>-<arch>.tar.gz   (.zip on Windows)
 
 Pick the asset for the platform:
 
@@ -61,7 +61,7 @@ Pick the asset for the platform:
 os=$(uname -s | tr 'A-Z' 'a-z'); [ "$os" = darwin ] && os=osx
 arch=$(uname -m); case "$arch" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; esac
 mkdir -p "$HOME/.local/bin"
-curl -fsSL "https://cdn.tabulareditor.com/files/cli/latest/te-$os-$arch.tar.gz" \
+curl -fsSL "https://cdn.tabulareditor.com/files/latest/cli/te-$os-$arch.tar.gz" \
   | tar xz -C "$HOME/.local/bin" te
 chmod +x "$HOME/.local/bin/te"
 export PATH="$HOME/.local/bin:$PATH"          # this shell
@@ -80,7 +80,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # or ~/.zshrc
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 $dir  = "$env:LOCALAPPDATA\Programs\te"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-Invoke-WebRequest "https://cdn.tabulareditor.com/files/cli/latest/te-win-$arch.zip" -OutFile "$env:TEMP\te.zip"
+Invoke-WebRequest "https://cdn.tabulareditor.com/files/latest/cli/te-win-$arch.zip" -OutFile "$env:TEMP\te.zip"
 Expand-Archive -Force "$env:TEMP\te.zip" -DestinationPath $dir
 [Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", 'User')
 & "$dir\te.exe" --version
@@ -146,6 +146,17 @@ inject_local_sections() {
     ' "$skill" > "$t" && mv "$t" "$skill"
   fi
 
+  if ! grep -qF '`references/dax-test-patterns.md`' "$skill"; then
+    t="$(mktemp)" || return 0
+    awk '
+      { print }
+      /^- `references\/testing\.md`/ && !done {
+        print "- `references/dax-test-patterns.md` - what to test: measure contracts (additivity, time shift, blank, safe division, bounds), integrity and schema checks, verified suite examples, CI tagging"
+        done=1
+      }
+    ' "$skill" > "$t" && mv "$t" "$skill"
+  fi
+
   # 3. get-te-cli.md entry at the top of the bundled-references list.
   if ! grep -qF '`references/get-te-cli.md`' "$skill"; then
     t="$(mktemp)" || return 0
@@ -195,7 +206,7 @@ SRC="$tmp/$SUBDIR"
 cp "$SRC/SKILL.md" "$DEST/SKILL.md"
 mkdir -p "$DEST/references"
 # Drop upstream-managed references (keep the local-only ones), then copy upstream's.
-find "$DEST/references" -maxdepth 1 -name '*.md' ! -name 'get-te-cli.md' ! -name 'pbir-cli-tandem.md' -delete 2>/dev/null
+find "$DEST/references" -maxdepth 1 -name '*.md' ! -name 'get-te-cli.md' ! -name 'pbir-cli-tandem.md' ! -name 'dax-test-patterns.md' -delete 2>/dev/null
 for f in "$SRC/references/"*.md; do
   case "$(basename "$f")" in pbir-cli-tandem.md) continue ;; esac
   cp "$f" "$DEST/references/"
@@ -203,6 +214,10 @@ done
 
 # Strip the upstream version frontmatter (unsupported here; plugin.json versions instead).
 perl -ni -e 'print unless !$d && /^version:/ && ($d=1)' "$DEST/SKILL.md"
+
+perl -pi -e 'BEGIN{$d=shift} $_="$d\n" if /^description:/' 'description: Expert guidance for the cross-platform Tabular Editor CLI (the `te` binary, in preview) that manages Power BI and Analysis Services semantic models from the terminal on macOS, Linux and Windows. Use when the user mentions the `te` CLI or Tabular Editor CLI, runs a `te` command, or wants to scaffold, inspect, edit, validate, run BPA on, query, deploy, refresh or migrate a semantic model from a terminal or CI pipeline. Also use for DAX regression tests, measure contracts and invariants, data quality and orphan-key checks, snapshot baselines or A/B comparison of two deployed models, even when the user does not name `te`. Not for the legacy Windows-only TabularEditor.exe (TE2).' "$DEST/SKILL.md"
+perl -pi -e 's{`--save` here names the snapshot file to write and has nothing to do with the mutation flag on editing commands\.}{`-o, --output-file` names the snapshot file to write; `--save` is rejected here.}' "$DEST/references/testing.md"
+find "$DEST" -name '*.md' -exec perl -pi -e 's{cdn\.tabulareditor\.com/files/cli/latest/}{cdn.tabulareditor.com/files/latest/cli/}g' {} +
 
 # Re-apply the local-only augmentations (upstream does not carry these).
 write_get_ref

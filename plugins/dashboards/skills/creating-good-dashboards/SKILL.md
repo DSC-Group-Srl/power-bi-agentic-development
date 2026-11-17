@@ -81,7 +81,7 @@ details:    a detail panel or tooltip shows the selected item's own values next 
 A dashboard earns its place when the reader knows what to do next. Monitoring alone is not enough.
 
 - Give it a "do next" block: two or three ranked actions, each with the expected effect and the evidence behind
-  it ("Lights out by 22:30: +1h 03m, 23 nights"). Rank by the size of the effect in the data
+  it ("Orders shipped within 2 days: +18% repeat rate, 340 customers"). Rank by the size of the effect in the data
 - Derive actions from drivers the data shows: compare the KPI across a lever the reader controls (time of day,
   day of week, channel, account) and state the difference; never give generic advice the data does not support
 - Show the sample size behind every driver, and say when it is a dashboard-only calculation
@@ -111,8 +111,8 @@ What to do instead:
 - **Reuse the user's existing visual system first**: their other dashboards, apps, themes or design tokens,
   down to the exact colours, fonts and chart components. A dashboard that matches what they already use reads
   as theirs; a fresh template reads as generated
-- **Otherwise derive the look from the subject**: its units, scales and conventions (hours and bedtimes for
-  sleep, fiscal periods for finance), with deliberately chosen neutrals and one accent
+- **Otherwise derive the look from the subject**: its units, scales and conventions (durations and times of day
+  for scheduling, fiscal periods for finance), with deliberately chosen neutrals and one accent
 - **Design both light and dark** from one token set unless the user commits to one; check contrast in both
 - **Style every native control** (selects, scrollbars, focus rings, buttons) to match; browser defaults look
   unfinished
